@@ -22,7 +22,7 @@ import {
   toggleTaskInFirestore,
   deleteTaskFromFirestore,
 } from '../lib/firestore-sync';
-import { loadLocalState, saveLocalState, clearLocalState } from '../lib/storage';
+import { loadLocalState, saveLocalState, clearLocalState, getSavedSemester } from '../lib/storage';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
@@ -47,12 +47,24 @@ interface DashboardState {
   maxUsers: number;
   activeUsersCount: number;
   authError: string | null;
+  currentSemester: string;
+  totalDegreeCreditPoints: number;
+  degreePlanImage: string | null;
 
   // Actions
   initAuthListener: () => () => void;
   loginWithGoogle: () => Promise<{ success: boolean; error?: string }>;
   loginDirect: (email: string, displayName?: string) => Promise<void>;
   logout: () => Promise<void>;
+  setCurrentSemester: (semester: string) => void;
+  setTotalDegreeCreditPoints: (cp: number) => void;
+  setDegreePlanImage: (img: string | null) => void;
+  updateUnitStatus: (
+    unitId: string,
+    status: 'active' | 'finished' | 'upcoming',
+    extra?: { finalMark?: number | null; semester?: string }
+  ) => Promise<void>;
+  batchImportUpcomingUnits: (newUnits: Omit<Unit, 'id'>[]) => Promise<void>;
   setOnboardingData: (data: {
     preferredName: string;
     degreeName: string;
@@ -335,6 +347,178 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   maxUsers: MAX_ALLOWED_USERS,
   activeUsersCount: 1,
   authError: null,
+  currentSemester: cached?.currentSemester || getSavedSemester(),
+  totalDegreeCreditPoints: cached?.totalDegreeCreditPoints || 192,
+  degreePlanImage: cached?.degreePlanImage || null,
+
+  setCurrentSemester: (semester: string) => {
+    const trimmed = semester.trim();
+    set({ currentSemester: trimmed });
+    const { userId, units, tasks, metricView, isWhatIfMode, degreeName, targetWam, displayName, userEmail, totalDegreeCreditPoints, degreePlanImage, isOnboarded } = get();
+    saveLocalState(userId, units, tasks, metricView, isWhatIfMode, {
+      degreeName,
+      targetWam,
+      displayName,
+      userEmail,
+      currentSemester: trimmed,
+      totalDegreeCreditPoints,
+      degreePlanImage,
+      isOnboarded,
+    });
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('apex_current_semester', trimmed);
+      } catch (err) {
+        console.warn('Could not write apex_current_semester to localStorage:', err);
+      }
+    }
+    if (userId) {
+      setDoc(
+        doc(db, 'users', userId),
+        { currentSemester: trimmed, updatedAt: new Date().toISOString() },
+        { merge: true }
+      ).catch((err) => console.warn('Could not save currentSemester to Firestore:', err));
+    }
+  },
+
+  setTotalDegreeCreditPoints: (cp: number) => {
+    const validCp = Number(cp) > 0 ? Number(cp) : 192;
+    set({ totalDegreeCreditPoints: validCp });
+    const { userId, units, tasks, metricView, isWhatIfMode, degreeName, targetWam, displayName, userEmail, currentSemester, degreePlanImage, isOnboarded } = get();
+    saveLocalState(userId, units, tasks, metricView, isWhatIfMode, {
+      degreeName,
+      targetWam,
+      displayName,
+      userEmail,
+      currentSemester,
+      totalDegreeCreditPoints: validCp,
+      degreePlanImage,
+      isOnboarded,
+    });
+    if (userId) {
+      setDoc(
+        doc(db, 'users', userId),
+        { totalDegreeCreditPoints: validCp, updatedAt: new Date().toISOString() },
+        { merge: true }
+      ).catch((err) => console.warn('Could not save totalDegreeCreditPoints to Firestore:', err));
+    }
+  },
+
+  setDegreePlanImage: (img: string | null) => {
+    set({ degreePlanImage: img });
+    const { userId, units, tasks, metricView, isWhatIfMode, degreeName, targetWam, displayName, userEmail, currentSemester, totalDegreeCreditPoints, isOnboarded } = get();
+    saveLocalState(userId, units, tasks, metricView, isWhatIfMode, {
+      degreeName,
+      targetWam,
+      displayName,
+      userEmail,
+      currentSemester,
+      totalDegreeCreditPoints,
+      degreePlanImage: img,
+      isOnboarded,
+    });
+    if (userId) {
+      setDoc(
+        doc(db, 'users', userId),
+        { degreePlanImage: img, updatedAt: new Date().toISOString() },
+        { merge: true }
+      ).catch((err) => console.warn('Could not save degreePlanImage to Firestore:', err));
+    }
+  },
+
+  updateUnitStatus: async (unitId, status, extra) => {
+    const { userId, metricView, isWhatIfMode, currentSemester, degreeName, targetWam, displayName, userEmail, totalDegreeCreditPoints, degreePlanImage, isOnboarded } = get();
+    const updated = get().units.map((u) => {
+      if (u.id !== unitId) return u;
+      return {
+        ...u,
+        status,
+        ...(extra?.finalMark !== undefined ? { finalMark: extra.finalMark } : {}),
+        ...(extra?.semester ? { semester: extra.semester.trim() } : {}),
+      };
+    });
+
+    set({ units: updated, syncStatus: 'saving' });
+    saveLocalState(userId, updated, get().tasks, metricView, isWhatIfMode, {
+      degreeName,
+      targetWam,
+      displayName,
+      userEmail,
+      currentSemester,
+      totalDegreeCreditPoints,
+      degreePlanImage,
+      isOnboarded,
+    });
+
+    const changedUnit = updated.find((u) => u.id === unitId);
+    if (userId && changedUnit) {
+      try {
+        await saveUnitToFirestore(userId, changedUnit);
+        set({ syncStatus: 'synced' });
+      } catch {
+        set({ syncStatus: 'saved' });
+      }
+    } else {
+      set({ syncStatus: 'saved' });
+    }
+  },
+
+  batchImportUpcomingUnits: async (newUnits) => {
+    const { userId, metricView, isWhatIfMode, units, currentSemester, degreeName, targetWam, displayName, userEmail, totalDegreeCreditPoints, degreePlanImage, isOnboarded } = get();
+    const existingCodes = new Set(units.map((u) => u.code.toUpperCase().trim()));
+    const unitsToAdd: Unit[] = [];
+
+    for (const u of newUnits) {
+      const cleanCode = (u.code || 'UNIT').toUpperCase().trim();
+      if (!existingCodes.has(cleanCode)) {
+        existingCodes.add(cleanCode);
+        const cleanCp = Number(u.creditPoints) > 0 ? Number(u.creditPoints) : 6;
+        const cleanSem = u.semester ? u.semester.trim() : 'Upcoming Semester';
+        const cleanYear = Number(u.year) > 0 ? Number(u.year) : 2026;
+
+        unitsToAdd.push({
+          ...u,
+          id: `unit-${cleanCode.toLowerCase().replace(/[^a-z0-9]/g, '')}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          code: cleanCode,
+          name: u.name?.trim() || cleanCode,
+          creditPoints: cleanCp,
+          semester: cleanSem,
+          year: cleanYear,
+          status: 'upcoming',
+          gradingScheme: u.gradingScheme || 'standard',
+          assessments: Array.isArray(u.assessments) ? u.assessments : [],
+        });
+      }
+    }
+
+    if (unitsToAdd.length === 0) return;
+
+    const merged = [...units, ...unitsToAdd];
+    set({ units: merged, syncStatus: 'saving' });
+    saveLocalState(userId, merged, get().tasks, metricView, isWhatIfMode, {
+      degreeName,
+      targetWam,
+      displayName,
+      userEmail,
+      currentSemester,
+      totalDegreeCreditPoints,
+      degreePlanImage,
+      isOnboarded,
+    });
+
+    if (userId) {
+      try {
+        for (const unit of unitsToAdd) {
+          await saveUnitToFirestore(userId, unit);
+        }
+        set({ syncStatus: 'synced' });
+      } catch {
+        set({ syncStatus: 'saved' });
+      }
+    } else {
+      set({ syncStatus: 'saved' });
+    }
+  },
 
   initAuthListener: () => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -344,12 +528,15 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
           set({
             units: local.units || [],
             tasks: local.tasks || [],
-            metricView: local.metricView || 'HWAM',
+            metricView: local.metricView || 'WAM',
             isWhatIfMode: local.isWhatIfMode ?? true,
             displayName: local.displayName || '',
             degreeName: local.degreeName || '',
             targetWam: local.targetWam || 75,
-            isOnboarded: Boolean(local.isOnboarded && local.degreeName),
+            currentSemester: local.currentSemester || 'Semester 1, 2026',
+            totalDegreeCreditPoints: local.totalDegreeCreditPoints || 192,
+            degreePlanImage: local.degreePlanImage || null,
+            isOnboarded: Boolean(local.isOnboarded || (local.degreeName && local.units?.length > 0)),
             isAuthLoading: false,
           });
         } else {
@@ -364,14 +551,35 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       const uid = firebaseUser.uid;
       const name = firebaseUser.displayName || email.split('@')[0] || '';
 
-      set({
-        isAuthenticated: true,
-        userId: uid,
-        userEmail: email,
-        displayName: get().displayName || name,
-        photoURL: firebaseUser.photoURL || '',
-        studentId: email.split('@')[0],
-      });
+      // Hydrate from localStorage first for instant UI response
+      const local = loadLocalState(uid);
+      if (local) {
+        set({
+          isAuthenticated: true,
+          userId: uid,
+          userEmail: email,
+          displayName: local.displayName || name,
+          photoURL: firebaseUser.photoURL || '',
+          studentId: email.split('@')[0],
+          units: local.units && local.units.length > 0 ? local.units : get().units,
+          tasks: local.tasks && local.tasks.length > 0 ? local.tasks : get().tasks,
+          degreeName: local.degreeName || get().degreeName,
+          targetWam: local.targetWam || get().targetWam,
+          currentSemester: local.currentSemester || get().currentSemester,
+          totalDegreeCreditPoints: local.totalDegreeCreditPoints || get().totalDegreeCreditPoints,
+          degreePlanImage: local.degreePlanImage || get().degreePlanImage,
+          isOnboarded: Boolean(local.isOnboarded || local.degreeName),
+        });
+      } else {
+        set({
+          isAuthenticated: true,
+          userId: uid,
+          userEmail: email,
+          displayName: name,
+          photoURL: firebaseUser.photoURL || '',
+          studentId: email.split('@')[0],
+        });
+      }
 
       try {
         // Query Firestore for user profile
@@ -380,20 +588,50 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
         let userTargetWam = get().targetWam;
         let userIsOnboarded = get().isOnboarded;
         let userName = get().displayName || name;
+        let userCurrentSemester = get().currentSemester;
+        let userTotalCP = get().totalDegreeCreditPoints;
+        let userDegreeImg = get().degreePlanImage;
 
         if (userProfileSnap.exists()) {
           const profileData = userProfileSnap.data();
           if (profileData.degreeName) userDegree = profileData.degreeName;
-          if (profileData.targetWam) userTargetWam = profileData.targetWam;
+          if (profileData.targetWam) userTargetWam = Number(profileData.targetWam);
           if (profileData.displayName) userName = profileData.displayName;
+          if (profileData.currentSemester) userCurrentSemester = profileData.currentSemester;
+          if (profileData.totalDegreeCreditPoints) userTotalCP = Number(profileData.totalDegreeCreditPoints);
+          if (profileData.degreePlanImage) userDegreeImg = profileData.degreePlanImage;
           if (typeof profileData.isOnboarded === 'boolean') {
             userIsOnboarded = profileData.isOnboarded;
           }
         }
 
-        // Query Firestore for user's units
+        // Query Firestore for user's units and tasks
         let userUnits = await loadUserUnitsFromFirestore(uid);
         let userTasks = await loadUserTasksFromFirestore(uid);
+
+        // Fallback to local units if Firestore has not finished saving or is empty
+        if ((!userUnits || userUnits.length === 0) && local?.units && local.units.length > 0) {
+          userUnits = local.units;
+          // Synchronize back to Firestore
+          for (const u of userUnits) {
+            saveUnitToFirestore(uid, u).catch(() => {});
+          }
+        }
+
+        if ((!userTasks || userTasks.length === 0) && local?.tasks && local.tasks.length > 0) {
+          userTasks = local.tasks;
+          for (const t of userTasks) {
+            saveTaskToFirestore(uid, t).catch(() => {});
+          }
+        }
+
+        // Determine if user has already onboarded
+        const hasOnboarded = Boolean(
+          userIsOnboarded === true ||
+          (userUnits && userUnits.length > 0) ||
+          (userDegree && userDegree.trim().length > 0) ||
+          local?.isOnboarded
+        );
 
         set({
           units: userUnits,
@@ -401,7 +639,10 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
           displayName: userName,
           degreeName: userDegree,
           targetWam: userTargetWam,
-          isOnboarded: Boolean(userIsOnboarded && userDegree),
+          currentSemester: userCurrentSemester,
+          totalDegreeCreditPoints: userTotalCP,
+          degreePlanImage: userDegreeImg,
+          isOnboarded: hasOnboarded,
           isDataLoading: false,
           syncStatus: 'synced',
         });
@@ -410,7 +651,11 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
           displayName: userName,
           degreeName: userDegree,
           targetWam: userTargetWam,
-          isOnboarded: Boolean(userIsOnboarded && userDegree),
+          userEmail: email,
+          currentSemester: userCurrentSemester,
+          totalDegreeCreditPoints: userTotalCP,
+          degreePlanImage: userDegreeImg,
+          isOnboarded: hasOnboarded,
         });
       } catch (err) {
         console.error('Error syncing with Firestore:', err);
@@ -420,6 +665,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
 
     return unsubscribe;
   },
+
 
   loginWithGoogle: async () => {
     set({ isAuthLoading: true, authError: null, syncStatus: 'saving' });

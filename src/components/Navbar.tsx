@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { useDashboardStore } from '../store/useDashboardStore';
+import { downloadAcademicCsv } from '../lib/export-csv';
+import { ThemeToggle } from './ThemeToggle';
 import {
   Sparkles,
   Calendar,
@@ -8,32 +10,51 @@ import {
   LogOut,
   Menu,
   X,
+  Download,
+  BookMarked,
 } from 'lucide-react';
 
 interface NavbarProps {
   onOpenSyllabusModal: () => void;
   onOpenCanvasModal: () => void;
   onOpenAddUnitModal: () => void;
+  onOpenDegreePlanModal?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
   onOpenSyllabusModal,
   onOpenCanvasModal,
   onOpenAddUnitModal,
+  onOpenDegreePlanModal,
 }) => {
   const {
+    units,
     isWhatIfMode,
     toggleWhatIfMode,
     metricView,
     setMetricView,
     userEmail,
     displayName,
+    degreeName,
+    targetWam,
     photoURL,
     syncStatus,
     logout,
   } = useDashboardStore();
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const handleExportCsv = () => {
+    downloadAcademicCsv({
+      units,
+      isWhatIfMode,
+      metricView,
+      studentName: displayName || undefined,
+      studentEmail: userEmail || undefined,
+      degreeName,
+      targetWam,
+    });
+  };
 
   return (
     <header className="sticky top-0 z-40 bg-white/95 dark:bg-zinc-950/95 backdrop-blur-md border-b border-zinc-200 dark:border-zinc-800">
@@ -91,7 +112,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
 
           {/* Desktop Metric View Segmented Control */}
-          <div className="hidden lg:flex items-center p-1 bg-zinc-100 dark:bg-zinc-900 rounded-lg border border-zinc-200/60 dark:border-zinc-800">
+          <div className="hidden xl:flex items-center p-1 bg-zinc-100 dark:bg-zinc-900 rounded-lg border border-zinc-200/60 dark:border-zinc-800">
             {(['WAM', 'SAM'] as const).map((view) => (
               <button
                 key={view}
@@ -107,17 +128,43 @@ export const Navbar: React.FC<NavbarProps> = ({
             ))}
           </div>
 
-          {/* Header Action Buttons: ALWAYS visible on all screens */}
+          {/* Header Action Buttons */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {/* Prominent Upload Syllabus Button - NEVER HIDDEN */}
+            {/* Theme Toggle (Light / Dark / System) */}
+            <ThemeToggle />
+
+            {/* Prominent Upload Syllabus Button */}
             <button
               onClick={onOpenSyllabusModal}
               className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold transition-colors shadow-xs cursor-pointer shrink-0"
               title="Upload unit outline PDF to extract assessments"
             >
               <FileUp className="w-3.5 h-3.5" />
-              <span>Upload Syllabus</span>
+              <span className="hidden sm:inline">Upload Syllabus</span>
+              <span className="sm:hidden">Syllabus</span>
             </button>
+
+            {/* Export CSV Data Button */}
+            <button
+              onClick={handleExportCsv}
+              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 rounded-lg text-xs font-mono font-medium transition-colors shadow-2xs cursor-pointer shrink-0"
+              title="Download academic record, WAM, and hurdle summary as CSV"
+            >
+              <Download className="w-3.5 h-3.5 text-zinc-600 dark:text-zinc-400" />
+              <span className="hidden md:inline">Export CSV</span>
+            </button>
+
+            {/* Degree Plan Photo / Roadmap Button */}
+            {onOpenDegreePlanModal && (
+              <button
+                onClick={onOpenDegreePlanModal}
+                className="hidden xl:inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 rounded-lg text-xs font-mono font-medium transition-colors shadow-2xs shrink-0 cursor-pointer"
+                title="Upload Degree Plan Photo / Progression Roadmap"
+              >
+                <BookMarked className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400" />
+                <span>Degree Plan</span>
+              </button>
+            )}
 
             {/* What-If Toggle */}
             <button
@@ -147,11 +194,11 @@ export const Navbar: React.FC<NavbarProps> = ({
             {/* Canvas Sync Button */}
             <button
               onClick={onOpenCanvasModal}
-              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 rounded-lg text-xs font-medium transition-colors shadow-xs shrink-0"
+              className="hidden lg:inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 rounded-lg text-xs font-medium transition-colors shadow-xs shrink-0"
               title="Sync Canvas LMS Calendar"
             >
               <Calendar className="w-3.5 h-3.5 text-zinc-500" />
-              <span className="hidden md:inline">Canvas</span>
+              <span>Canvas</span>
             </button>
 
             {/* Quick Add Unit Button */}
@@ -180,7 +227,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               title="Sign out of Google account"
             >
               <LogOut className="w-3.5 h-3.5" />
-              <span className="hidden lg:inline">Sign Out</span>
+              <span className="hidden xl:inline">Sign Out</span>
             </button>
           </div>
         </div>
@@ -215,14 +262,27 @@ export const Navbar: React.FC<NavbarProps> = ({
             <div className="grid grid-cols-2 gap-2 pt-1">
               <button
                 onClick={() => {
-                  onOpenSyllabusModal();
+                  handleExportCsv();
                   setMobileMenuOpen(false);
                 }}
-                className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-emerald-600 text-white rounded-xl text-xs font-semibold shadow-xs"
+                className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 rounded-xl text-xs font-semibold shadow-2xs border border-zinc-200 dark:border-zinc-700"
               >
-                <FileUp className="w-3.5 h-3.5" />
-                <span>Upload Syllabus</span>
+                <Download className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Export CSV</span>
               </button>
+
+              {onOpenDegreePlanModal && (
+                <button
+                  onClick={() => {
+                    onOpenDegreePlanModal();
+                    setMobileMenuOpen(false);
+                  }}
+                  className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 text-teal-800 dark:text-teal-200 rounded-xl text-xs font-semibold"
+                >
+                  <BookMarked className="w-3.5 h-3.5 text-teal-600" />
+                  <span>Degree Plan</span>
+                </button>
+              )}
 
               <button
                 onClick={() => {

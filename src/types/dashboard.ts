@@ -31,6 +31,9 @@ export const UnitGradingSchemeEnum = z.enum([
   'foundation_plus_advanced', // Foundation satisfies 50 P base; advanced tasks add points up to 100
 ]);
 
+export const UnitStatusEnum = z.enum(['active', 'finished', 'upcoming']);
+export type UnitStatus = z.infer<typeof UnitStatusEnum>;
+
 export const UnitZodSchema = z.object({
   id: z.string().min(1),
   code: z.string().min(1, 'Unit code is required').max(16),
@@ -39,6 +42,9 @@ export const UnitZodSchema = z.object({
   level: z.number().optional().default(1000),
   semester: z.string().default('Semester 1, 2026'),
   year: z.number().default(2026),
+  status: UnitStatusEnum.default('active').optional(),
+  finalMark: z.number().min(0).max(100).nullable().optional(),
+  syllabusUploaded: z.boolean().default(false).optional(),
   gradingScheme: UnitGradingSchemeEnum.default('standard'),
   assessments: z.array(AssessmentZodSchema).refine(
     (assessments) => {
@@ -90,8 +96,25 @@ export interface Unit {
   level?: number;
   semester: string;
   year: number;
+  status?: UnitStatus;
+  finalMark?: number | null;
+  syllabusUploaded?: boolean;
   gradingScheme?: UnitGradingScheme;
   assessments: Assessment[];
+}
+
+export interface DegreePlanExtraction {
+  degreeName?: string;
+  totalCreditPoints?: number;
+  recommendedUnits: {
+    code: string;
+    name: string;
+    creditPoints: number;
+    year: number;
+    semester: string;
+    prerequisites?: string[];
+    isCore?: boolean;
+  }[];
 }
 
 export type MicroTask = z.infer<typeof MicroTaskZodSchema>;

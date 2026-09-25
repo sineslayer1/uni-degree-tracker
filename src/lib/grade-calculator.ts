@@ -251,50 +251,95 @@ export function calculateUnitResult(unit: Unit, isWhatIfMode: boolean): Calculat
  * Calculates academic metrics without level multipliers or HWAM.
  * WAM is calculated purely as: Σ(CP × Mark) / Σ(CP).
  */
-export function calculateAcademicMetrics(units: Unit[], isWhatIfMode: boolean): AcademicMetrics {
-  const unitResults = units.map((u) => calculateUnitResult(u, isWhatIfMode));
+export function calculateAcademicMetrics(
+  units: Unit[],
+  isWhatIfMode: boolean,
+  currentSemester?: string
+): AcademicMetrics {
+  // Only active and finished units contribute to WAM / SAM. Upcoming units are planned future units.
+  const gradedUnits = (units || []).filter((u) => u && u.status !== 'upcoming');
+  const unitResults = gradedUnits.map((u) => calculateUnitResult(u, isWhatIfMode));
 
-  let totalCP = 0;
+  let totalWamCP = 0;
   let totalWeightedActualProduct = 0;
   let totalWeightedProjectedProduct = 0;
+
+  let totalSamCP = 0;
+  let totalSamActualProduct = 0;
+  let totalSamProjectedProduct = 0;
 
   let pendingHurdlesCount = 0;
   let failedHurdlesCount = 0;
 
   for (const result of unitResults) {
-    const cp = result.unit.creditPoints || 6;
-    totalCP += cp;
+    const u = result.unit;
+    const cp = Number(u.creditPoints) > 0 ? Number(u.creditPoints) : 6;
+    const isFinished = u.status === 'finished';
 
-    const actualMark = result.completedWeight > 0 ? result.currentPercentage : 0;
-    const projectedMark = result.projectedFinalMark;
+    // Finished units have a definitive final mark
+    const finalEarnedMark =
+      typeof u.finalMark === 'number' && !isNaN(u.finalMark)
+        ? Math.max(0, Math.min(100, u.finalMark))
+        : result.completedWeight > 0
+        ? result.currentPercentage
+        : 0;
 
-    totalWeightedActualProduct += actualMark * cp;
+    const projectedMark =
+      typeof u.finalMark === 'number' && !isNaN(u.finalMark)
+        ? Math.max(0, Math.min(100, u.finalMark))
+        : result.projectedFinalMark;
+
+    // Cumulative WAM encompasses both finished and active units
+    totalWamCP += cp;
+    totalWeightedActualProduct += finalEarnedMark * cp;
     totalWeightedProjectedProduct += projectedMark * cp;
 
-    for (const h of result.hurdles) {
-      if (h.isPending) pendingHurdlesCount++;
-      if (h.actualMark !== null && !h.isPassed) failedHurdlesCount++;
+    // SAM (Semester Average Mark) is for units in the currently selected active semester
+    if (!isFinished) {
+      const matchesSemester = currentSemester
+        ? (!u.semester || u.semester.trim() === currentSemester.trim())
+        : true;
+
+      if (matchesSemester) {
+        totalSamCP += cp;
+        totalSamActualProduct += finalEarnedMark * cp;
+        totalSamProjectedProduct += projectedMark * cp;
+
+        // Only active units in this semester contribute to pending/at-risk hurdles
+        for (const h of result.hurdles) {
+          if (h.isPending) pendingHurdlesCount++;
+          if (h.actualMark !== null && !h.isPassed) failedHurdlesCount++;
+        }
+      }
     }
   }
 
-  const wam = totalCP > 0 ? Math.round((totalWeightedActualProduct / totalCP) * 10) / 10 : 0;
+  const wam = totalWamCP > 0 ? Math.round((totalWeightedActualProduct / totalWamCP) * 10) / 10 : 0;
   const projectedWam =
-    totalCP > 0 ? Math.round((totalWeightedProjectedProduct / totalCP) * 10) / 10 : 0;
+    totalWamCP > 0 ? Math.round((totalWeightedProjectedProduct / totalWamCP) * 10) / 10 : 0;
 
-  const sam = wam;
-  const projectedSam = projectedWam;
+  const sam =
+    totalSamCP > 0
+      ? Math.round((totalSamActualProduct / totalSamCP) * 10) / 10
+      : (totalWamCP > 0 ? wam : 0);
+  const projectedSam =
+    totalSamCP > 0
+      ? Math.round((totalSamProjectedProduct / totalSamCP) * 10) / 10
+      : (totalWamCP > 0 ? projectedWam : 0);
 
   const standing = getAcademicStanding(wam);
   const projStanding = getAcademicStanding(projectedWam);
 
   return {
-    wam,
-    projectedWam,
-    sam,
-    projectedSam,
-    totalCreditPoints: totalCP,
-    completedUnitsCount: unitResults.filter((r) => r.completedWeight >= 100).length,
-    activeUnitsCount: units.length,
+    wam: isNaN(wam) ? 0 : wam,
+    projectedWam: isNaN(projectedWam) ? 0 : projectedWam,
+    sam: isNaN(sam) ? 0 : sam,
+    projectedSam: isNaN(projectedSam) ? 0 : projectedSam,
+    totalCreditPoints: totalWamCP,
+    completedUnitsCount: (units || []).filter(
+      (u) => u && (u.status === 'finished' || (u.assessments && u.assessments.length > 0 && u.assessments.every((a) => a.completed)))
+    ).length,
+    activeUnitsCount: (units || []).filter((u) => u && u.status !== 'finished' && u.status !== 'upcoming').length,
     academicStanding: standing,
     projectedStanding: projStanding,
     honoursClass: standing,
@@ -304,3 +349,4 @@ export function calculateAcademicMetrics(units: Unit[], isWhatIfMode: boolean): 
     unitResults,
   };
 }
+

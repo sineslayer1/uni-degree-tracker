@@ -48,28 +48,6 @@ export const LoginView: React.FC = () => {
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
         <div className="bg-white dark:bg-zinc-900 py-8 px-6 shadow-xs border border-zinc-200 dark:border-zinc-800 rounded-2xl sm:px-10 space-y-6">
-          {/* Capacity Meter */}
-          <div className="p-3.5 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700/60 rounded-xl space-y-2">
-            <div className="flex items-center justify-between text-xs font-mono">
-              <span className="flex items-center gap-1.5 font-semibold text-zinc-800 dark:text-zinc-200">
-                <Users className="w-3.5 h-3.5 text-zinc-500" />
-                <span>Account Slots:</span>
-              </span>
-              <span className="font-bold px-2 py-0.5 rounded bg-zinc-200 dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100">
-                {activeUsersCount} / {maxUsers} Max
-              </span>
-            </div>
-            <div className="w-full bg-zinc-200 dark:bg-zinc-700 h-1.5 rounded-full overflow-hidden">
-              <div
-                className="bg-zinc-900 dark:bg-zinc-100 h-full transition-all duration-300"
-                style={{ width: `${Math.min(100, (activeUsersCount / maxUsers) * 100)}%` }}
-              />
-            </div>
-            <p className="text-[11px] text-zinc-500 font-mono">
-              Open to Google accounts. Capped at {maxUsers} users to prevent spam.
-            </p>
-          </div>
-
           {/* Error Banner */}
           {(authError || localError) && (
             <div className="p-3.5 bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-900 rounded-xl flex items-start gap-2.5 text-xs text-rose-900 dark:text-rose-200">

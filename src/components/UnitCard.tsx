@@ -34,10 +34,13 @@ export const UnitCard: React.FC<UnitCardProps> = ({ unit }) => {
     deleteUnit,
     addAssessment,
     deleteAssessment,
+    updateUnitStatus,
   } = useDashboardStore();
 
   const [isExpanded, setIsExpanded] = useState(true);
   const [showAddAssessment, setShowAddAssessment] = useState(false);
+  const [isEditingSemester, setIsEditingSemester] = useState(false);
+  const [tempUnitSemester, setTempUnitSemester] = useState(unit.semester);
   const [newTitle, setNewTitle] = useState('');
   const [newWeight, setNewWeight] = useState(20);
   const [newKind, setNewKind] = useState<AssessmentKind>('standard');
@@ -46,6 +49,13 @@ export const UnitCard: React.FC<UnitCardProps> = ({ unit }) => {
 
   const result = calculateUnitResult(unit, isWhatIfMode);
   const isFoundationUnit = unit.gradingScheme === 'foundation_plus_advanced';
+
+  const handleSaveUnitSemester = async () => {
+    if (tempUnitSemester.trim()) {
+      await updateUnitStatus(unit.id, unit.status ?? 'active', { semester: tempUnitSemester.trim() });
+    }
+    setIsEditingSemester(false);
+  };
 
   const handleAddAssessmentSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -98,7 +108,34 @@ export const UnitCard: React.FC<UnitCardProps> = ({ unit }) => {
               <span className="text-zinc-300 dark:text-zinc-700">·</span>
               <span>{unit.creditPoints} CP</span>
               <span className="text-zinc-300 dark:text-zinc-700">·</span>
-              <span>{unit.semester}</span>
+              {isEditingSemester ? (
+                <div className="inline-flex items-center gap-1 bg-zinc-100 dark:bg-zinc-800 p-0.5 rounded">
+                  <input
+                    type="text"
+                    value={tempUnitSemester}
+                    onChange={(e) => setTempUnitSemester(e.target.value)}
+                    className="px-1.5 py-0.5 text-[11px] bg-white dark:bg-zinc-900 border border-emerald-500 rounded text-zinc-900 dark:text-zinc-100"
+                    placeholder="e.g. Semester 1, 2026"
+                  />
+                  <button
+                    onClick={handleSaveUnitSemester}
+                    className="px-1.5 py-0.5 text-[10px] bg-emerald-600 text-white rounded font-mono font-semibold"
+                  >
+                    Save
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => {
+                    setTempUnitSemester(unit.semester);
+                    setIsEditingSemester(true);
+                  }}
+                  className="hover:underline hover:text-emerald-600 dark:hover:text-emerald-400 cursor-pointer"
+                  title="Click to edit semester"
+                >
+                  {unit.semester} ✎
+                </button>
+              )}
               {isFoundationUnit && (
                 <>
                   <span className="text-zinc-300 dark:text-zinc-700">·</span>
@@ -500,13 +537,28 @@ export const UnitCard: React.FC<UnitCardProps> = ({ unit }) => {
             </form>
           ) : (
             <div className="flex flex-wrap items-center justify-between gap-2 mt-4 pt-3 border-t border-zinc-200/60 dark:border-zinc-800 text-xs font-mono">
-              <button
-                onClick={() => setShowAddAssessment(true)}
-                className="inline-flex items-center gap-1.5 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 font-medium py-1"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Add Assessment Item</span>
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setShowAddAssessment(true)}
+                  className="inline-flex items-center gap-1.5 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 font-medium py-1"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Assessment</span>
+                </button>
+
+                <button
+                  onClick={() =>
+                    updateUnitStatus(unit.id, 'finished', {
+                      finalMark: Math.round(result.earnedMark || result.projectedFinalMark),
+                    })
+                  }
+                  className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 font-medium py-1"
+                  title="Move to Finished Units archive"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Mark Finished</span>
+                </button>
+              </div>
 
               <button
                 onClick={() => deleteUnit(unit.id)}
@@ -514,7 +566,7 @@ export const UnitCard: React.FC<UnitCardProps> = ({ unit }) => {
                 title="Remove Unit"
               >
                 <Trash2 className="w-3.5 h-3.5" />
-                <span>Remove Unit</span>
+                <span>Remove</span>
               </button>
             </div>
           )}

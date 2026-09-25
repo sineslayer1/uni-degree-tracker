@@ -270,6 +270,134 @@ CRITICAL EXTRACTION REQUIREMENTS:
   }
 });
 
+// Ephemeral Degree Plan Photo / PDF Ingestion API
+app.post('/api/extract-degree-plan', async (req, res) => {
+  try {
+    const { imageBase64, mimeType = 'image/png', planText } = req.body;
+
+    const hasMedia = typeof imageBase64 === 'string' && imageBase64.length > 50;
+    const hasText = typeof planText === 'string' && planText.trim().length > 0;
+
+    if (!hasMedia && !hasText) {
+      return res.status(400).json({
+        error: 'Please upload a photo/PDF of your degree progression map or paste your plan details.',
+      });
+    }
+
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(503).json({
+        error: 'AI service unavailable: GEMINI_API_KEY is not configured on the server.',
+      });
+    }
+
+    const degreePlanResponseSchema = {
+      type: Type.OBJECT,
+      properties: {
+        degreeName: { type: Type.STRING },
+        totalCreditPoints: { type: Type.NUMBER },
+        recommendedUnits: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              code: { type: Type.STRING },
+              name: { type: Type.STRING },
+              creditPoints: { type: Type.NUMBER },
+              year: { type: Type.NUMBER },
+              semester: { type: Type.STRING },
+              prerequisites: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+              isCore: { type: Type.BOOLEAN },
+            },
+            required: ['code', 'name', 'creditPoints', 'year', 'semester'],
+          },
+        },
+      },
+      required: ['recommendedUnits'],
+    };
+
+    const promptText = `You are an expert university academic advisor analyzing an official engineering degree plan, CUSP progression map, or course pathway diagram.
+Carefully inspect the image or text and extract the complete degree curriculum:
+1. Degree Name: e.g. "Bachelor of Engineering Honours (Mechatronic Engineering)" or "Bachelor of Advanced Computing".
+2. Total Credit Points: Standard 4-year Australian engineering degree is 192 CP. 3-year bachelor is 144 CP.
+3. List of ALL recommended/planned units across all study years and semesters:
+   - code: Standard 4-letter prefix + 4-digit code (e.g. MATH1002, INFO1110, ELEC1601, AMME2500, MECH3400, COMP2017).
+   - name: Descriptive unit title (e.g. "Linear Algebra", "Introduction to Programming", "Foundations of Computer Systems").
+   - creditPoints: Credit points (usually 6 for USYD units, sometimes 3 or 12).
+   - year: Academic year of the program (1, 2, 3, or 4).
+   - semester: Study period (e.g. "Semester 1", "Semester 2").
+   - isCore: true if marked as Core / Mandatory, false if Elective.
+   - prerequisites: Any prerequisite unit codes mentioned.
+
+Ensure accuracy and clean unit code formatting.`;
+
+    const contentsPayload: any[] = [];
+    if (hasMedia) {
+      const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '');
+      contentsPayload.push({
+        inlineData: {
+          mimeType,
+          data: cleanBase64,
+        },
+      });
+    }
+    contentsPayload.push({
+      text: `${promptText}${hasText ? `\n\n=== DEGREE PLAN TEXT / NOTES ===\n${planText}` : ''}`,
+    });
+
+    const modelsToTry = [
+      'gemini-3.1-flash-lite',
+      'gemini-flash-lite-latest',
+      'gemini-flash-latest',
+      'gemini-3.5-flash',
+    ];
+    let planData: any = null;
+    let lastError: any = null;
+
+    for (const modelName of modelsToTry) {
+      try {
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: contentsPayload,
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: degreePlanResponseSchema,
+            temperature: 0.2,
+          },
+        });
+
+        if (response.text) {
+          const rawText = response.text || '{}';
+          const cleaned = rawText.replace(/```json\s*|\s*```/g, '').trim();
+          planData = JSON.parse(cleaned);
+          if (planData && Array.isArray(planData.recommendedUnits) && planData.recommendedUnits.length > 0) {
+            break;
+          }
+        }
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`Degree plan extraction failed with ${modelName}:`, err?.message || err);
+      }
+    }
+
+    if (!planData || !Array.isArray(planData.recommendedUnits) || planData.recommendedUnits.length === 0) {
+      throw lastError || new Error('Could not identify units from the degree plan image. Please ensure the course codes are legible.');
+    }
+
+    return res.json({
+      success: true,
+      degreePlan: planData,
+    });
+  } catch (error: any) {
+    console.error('Error in /api/extract-degree-plan:', error);
+    return res.status(500).json({
+      error: error?.message || 'Failed to analyze degree plan image. Please try again or enter units manually.',
+    });
+  }
+});
+
 // Server-Side Unit Validation Endpoint
 app.post('/api/validate-unit', (req, res) => {
   const result = UnitZodSchema.safeParse(req.body);
@@ -280,6 +408,95 @@ app.post('/api/validate-unit', (req, res) => {
     });
   }
   return res.json({ valid: true, unit: result.data });
+});
+
+// Multi-Turn Academic Advisor Chat Endpoint with Gemini
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { message, history = [], studentContext = '', modelPreference = 'gemini-3.5-flash' } = req.body;
+
+    if (!message || typeof message !== 'string' || message.trim().length === 0) {
+      return res.status(400).json({ error: 'Message cannot be empty.' });
+    }
+
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(503).json({
+        error: 'Gemini AI service unavailable: GEMINI_API_KEY is not configured on the server.',
+      });
+    }
+
+    // Role-specific system instructions
+    const systemInstruction = `You are the Apex Academic Advisor & Study Strategist, an expert AI mentor specializing in University of Sydney (USYD) engineering, computing, and STEM curriculum.
+Your role:
+1. Advise students on their Weighted Average Mark (WAM) and Semester Average Mark (SAM). Remind them that WAM at USYD is calculated purely as Σ(CP × Mark) / Σ(CP) weighted by credit points.
+2. Clearly explain double-pass exam hurdle policies: failing an exam hurdle drops their final grade to an automatic UF / 45 FA regardless of coursework marks.
+3. Guide students through Foundation + Advanced units (e.g. INFO1110) where meeting foundation requirements unlocks the 50 P baseline, and advanced extensions add marks above 50.
+4. Provide structured, actionable study schedules, revision tips, lab prep checklists, and What-If scenario simulations.
+5. Tone: Concise, encouraging, mathematically precise, formatted with clean bullet points and bold highlights.
+
+${studentContext ? `--- CURRENT STUDENT ACADEMIC PROFILE ---\n${studentContext}\n--------------------------------------` : ''}`;
+
+    // Format conversation history for Gemini SDK
+    const formattedContents = [
+      ...history
+        .filter((h: any) => h && h.text && (h.role === 'user' || h.role === 'model' || h.role === 'assistant'))
+        .map((h: any) => ({
+          role: h.role === 'assistant' || h.role === 'model' ? 'model' : 'user',
+          parts: [{ text: String(h.text) }],
+        })),
+      {
+        role: 'user',
+        parts: [{ text: message.trim() }],
+      },
+    ];
+
+    // Priority model chain based on user preference with fallback
+    const candidateModels = [
+      modelPreference || 'gemini-3.5-flash',
+      'gemini-3.5-flash',
+      'gemini-3.1-flash-lite',
+      'gemini-flash-latest',
+    ];
+
+    // Deduplicate candidate models
+    const uniqueModels = Array.from(new Set(candidateModels));
+
+    let reply = '';
+    let lastError: any = null;
+
+    for (const modelName of uniqueModels) {
+      try {
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: formattedContents,
+          config: {
+            systemInstruction,
+            temperature: 0.7,
+            topP: 0.95,
+          },
+        });
+
+        if (response.text) {
+          reply = response.text;
+          break;
+        }
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`Chat model ${modelName} failed, trying next candidate:`, err.message || err);
+      }
+    }
+
+    if (!reply) {
+      throw lastError || new Error('No response generated by Gemini chat models');
+    }
+
+    return res.json({ reply });
+  } catch (error: any) {
+    console.error('Error in /api/chat:', error);
+    return res.status(500).json({
+      error: error?.message || 'Failed to process message with AI Academic Advisor.',
+    });
+  }
 });
 
 // Health check

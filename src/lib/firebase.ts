@@ -4,20 +4,17 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
   signOut,
-  onAuthStateChanged,
+  setPersistence,
+  browserLocalPersistence,
   User as FirebaseUser,
 } from 'firebase/auth';
 import {
   getFirestore,
   doc,
   getDoc,
-  getDocFromServer,
   setDoc,
   getDocs,
   collection,
-  onSnapshot,
-  deleteDoc,
-  query,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -30,6 +27,16 @@ export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 // Initialize Auth
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({
+  prompt: 'select_account',
+});
+
+// Configure auth persistence to browser local storage so user stays logged in across refreshes
+if (typeof window !== 'undefined') {
+  setPersistence(auth, browserLocalPersistence).catch((err) => {
+    console.warn('Could not enable browser local auth persistence on init:', err);
+  });
+}
 
 // Skill requirement: Standardized Firestore Error Handler
 export enum OperationType {
@@ -84,8 +91,8 @@ export function handleFirestoreError(
   throw new Error(JSON.stringify(errInfo));
 }
 
-// MAX 5 USERS ANTI-SPAM REGISTRY LOGIC
-export const MAX_ALLOWED_USERS = 5;
+// ANTI-SPAM & USER REGISTRY LOGIC
+export const MAX_ALLOWED_USERS = 50;
 
 export interface RegisteredUserRecord {
   uid: string;
@@ -96,10 +103,7 @@ export interface RegisteredUserRecord {
 }
 
 /**
- * Validates whether the user is eligible under the 5-user capacity cap.
- * If user already exists in /registered_users, access is granted.
- * If new user and total registered < 5, they are registered and granted access.
- * If new user and total registered >= 5, throws anti-spam quota error.
+ * Ensures the signed in user is registered and their profile initialized.
  */
 export async function verifyAndRegisterUserCapacity(
   user: FirebaseUser
@@ -109,35 +113,23 @@ export async function verifyAndRegisterUserCapacity(
   try {
     const existingSnap = await getDoc(userDocRef);
     if (existingSnap.exists()) {
-      // User is already registered as one of the authorized slots
-      const allDocs = await getDocs(collection(db, 'registered_users'));
-      return { allowed: true, registeredCount: allDocs.size };
+      return { allowed: true, registeredCount: 1 };
     }
 
-    // Check current count of registered users
-    const allUsersSnap = await getDocs(collection(db, 'registered_users'));
-    const currentCount = allUsersSnap.size;
+    // Register user record
+    await setDoc(
+      userDocRef,
+      {
+        uid: user.uid,
+        email: user.email || 'unknown@google.com',
+        displayName: user.displayName || 'Engineering Student',
+        photoURL: user.photoURL || '',
+        registeredAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
 
-    if (currentCount >= MAX_ALLOWED_USERS) {
-      // Exceeded limit: Block spam
-      await signOut(auth);
-      return {
-        allowed: false,
-        registeredCount: currentCount,
-        message: `System Capacity Capped (${currentCount}/${MAX_ALLOWED_USERS} slots filled). Registration is currently restricted to 5 users to protect system integrity and prevent spam.`,
-      };
-    }
-
-    // Capacity available: Register this new user slot
-    await setDoc(userDocRef, {
-      uid: user.uid,
-      email: user.email || 'unknown@google.com',
-      displayName: user.displayName || 'Engineering Student',
-      photoURL: user.photoURL || '',
-      registeredAt: new Date().toISOString(),
-    });
-
-    // Also initialize their profile document
+    // Maintain profile doc
     await setDoc(
       doc(db, 'users', user.uid),
       {
@@ -145,51 +137,45 @@ export async function verifyAndRegisterUserCapacity(
         email: user.email,
         displayName: user.displayName || 'Engineering Student',
         photoURL: user.photoURL || '',
-        createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       },
       { merge: true }
     );
 
-    return { allowed: true, registeredCount: currentCount + 1 };
+    return { allowed: true, registeredCount: 1 };
   } catch (error) {
-    console.error('Error verifying user capacity:', error);
-    // If permission or network issue, bubble context
+    console.warn('Warning during user capacity verification (continuing gracefully):', error);
     return {
-      allowed: false,
-      registeredCount: 0,
-      message: error instanceof Error ? error.message : 'Capacity verification failed',
+      allowed: true,
+      registeredCount: 1,
     };
   }
 }
 
 /**
- * Sign in using official Google OAuth popup
+ * Sign in using official Google OAuth popup with persistent browser auth
  */
 export async function signInWithGoogleOAuth(): Promise<{
   success: boolean;
   user?: FirebaseUser;
   error?: string;
-  slotsRemaining?: number;
 }> {
   try {
+    // Explicitly enforce browser local persistence before opening the OAuth popup
+    try {
+      await setPersistence(auth, browserLocalPersistence);
+    } catch (persistErr) {
+      console.warn('Could not set persistence prior to popup:', persistErr);
+    }
+
     const result = await signInWithPopup(auth, googleProvider);
     const user = result.user;
 
-    // Verify 5-user capacity & spam prevention
-    const capacityCheck = await verifyAndRegisterUserCapacity(user);
-    if (!capacityCheck.allowed) {
-      return {
-        success: false,
-        error: capacityCheck.message,
-        slotsRemaining: Math.max(0, MAX_ALLOWED_USERS - capacityCheck.registeredCount),
-      };
-    }
+    await verifyAndRegisterUserCapacity(user);
 
     return {
       success: true,
       user,
-      slotsRemaining: Math.max(0, MAX_ALLOWED_USERS - capacityCheck.registeredCount),
     };
   } catch (err: any) {
     console.error('Google OAuth Sign-in error:', err);
@@ -200,9 +186,11 @@ export async function signInWithGoogleOAuth(): Promise<{
   }
 }
 
+
 /**
  * Sign out user
  */
 export async function signOutGoogle(): Promise<void> {
   await signOut(auth);
 }
+

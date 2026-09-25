@@ -2,6 +2,7 @@ import { Unit, MicroTask } from '../types/dashboard';
 
 const STORAGE_KEY_PREFIX = 'apex_eng_data_';
 const LAST_USER_KEY = 'apex_eng_last_user';
+const LAST_SEMESTER_KEY = 'apex_current_semester';
 
 export interface UserPersistedState {
   units: Unit[];
@@ -11,6 +12,10 @@ export interface UserPersistedState {
   degreeName?: string;
   targetWam?: number;
   displayName?: string;
+  userEmail?: string;
+  currentSemester?: string;
+  totalDegreeCreditPoints?: number;
+  degreePlanImage?: string | null;
   isOnboarded?: boolean;
   lastUpdated: string;
 }
@@ -19,8 +24,17 @@ export interface UserPersistedState {
  * Gets the current active storage key for a user.
  */
 export function getStorageKey(userId?: string | null): string {
-  const uid = userId || localStorage.getItem(LAST_USER_KEY) || 'guest_user';
+  const uid = userId || (typeof window !== 'undefined' ? localStorage.getItem(LAST_USER_KEY) : null) || 'guest_user';
   return `${STORAGE_KEY_PREFIX}${uid}`;
+}
+
+export function getSavedSemester(): string {
+  if (typeof window === 'undefined') return 'Semester 1, 2026';
+  try {
+    const saved = localStorage.getItem(LAST_SEMESTER_KEY);
+    if (saved && saved.trim()) return saved.trim();
+  } catch {}
+  return 'Semester 1, 2026';
 }
 
 /**
@@ -36,6 +50,10 @@ export function saveLocalState(
     degreeName?: string;
     targetWam?: number;
     displayName?: string;
+    userEmail?: string;
+    currentSemester?: string;
+    totalDegreeCreditPoints?: number;
+    degreePlanImage?: string | null;
     isOnboarded?: boolean;
   }
 ): void {
@@ -56,6 +74,9 @@ export function saveLocalState(
     if (userId) {
       localStorage.setItem(LAST_USER_KEY, userId);
     }
+    if (extra?.currentSemester) {
+      localStorage.setItem(LAST_SEMESTER_KEY, extra.currentSemester.trim());
+    }
   } catch (err) {
     console.error('Failed to save to localStorage:', err);
   }
@@ -70,7 +91,7 @@ export function loadLocalState(userId?: string | null): UserPersistedState | nul
     const raw = localStorage.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (parsed && Array.isArray(parsed.units)) {
+    if (parsed && typeof parsed === 'object') {
       return parsed as UserPersistedState;
     }
     return null;
@@ -79,6 +100,7 @@ export function loadLocalState(userId?: string | null): UserPersistedState | nul
     return null;
   }
 }
+
 
 /**
  * Clears local state for a user.
@@ -91,3 +113,4 @@ export function clearLocalState(userId?: string | null): void {
     console.error('Failed to clear local storage:', err);
   }
 }
+
