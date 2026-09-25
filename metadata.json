@@ -1,0 +1,6 @@
+{
+  "name": "Apex Engineering WAM & Hurdle Dashboard",
+  "description": "Minimalist, high-signal engineering student dashboard featuring WAM calculations, interactive grade sliders, double-pass hurdle monitoring, What-If grade projection, syllabus ingestion, and Canvas LMS sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

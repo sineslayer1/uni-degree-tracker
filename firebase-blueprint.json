@@ -1,0 +1,109 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Authenticated user profile linked to Google OAuth",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 128 },
+        "displayName": { "type": "string", "maxLength": 128 },
+        "photoURL": { "type": "string", "maxLength": 512 },
+        "canvasIcsUrl": { "type": "string", "maxLength": 512 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid", "email"]
+    },
+    "RegisteredUser": {
+      "title": "Registered User Slot",
+      "description": "Access slot entry for spam prevention and 5-user limit",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 128 },
+        "registeredAt": { "type": "string" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Unit": {
+      "title": "Engineering Unit of Study",
+      "description": "An academic unit with credit points, level weighting, and hurdle criteria",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "code": { "type": "string", "maxLength": 16 },
+        "name": { "type": "string", "maxLength": 128 },
+        "creditPoints": { "type": "number" },
+        "level": { "type": "number" },
+        "semester": { "type": "string", "maxLength": 32 },
+        "year": { "type": "number" },
+        "isArchived": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "code", "creditPoints", "level"]
+    },
+    "Assessment": {
+      "title": "Unit Assessment",
+      "description": "Weighted assessment item with double-pass hurdle constraints and marks",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "unitId": { "type": "string", "maxLength": 64 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 128 },
+        "weight": { "type": "number" },
+        "mark": { "type": "number" },
+        "isHurdle": { "type": "boolean" },
+        "hurdleMinMark": { "type": "number" },
+        "hurdleDescription": { "type": "string", "maxLength": 256 },
+        "dueDate": { "type": "string", "maxLength": 64 },
+        "completed": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "unitId", "userId", "title", "weight", "isHurdle"]
+    },
+    "MicroTask": {
+      "title": "Canvas Micro-Task",
+      "description": "Unweighted To-Do item for lab prep, tutorial problems, or safety quizzes",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "unitCode": { "type": "string", "maxLength": 16 },
+        "title": { "type": "string", "maxLength": 256 },
+        "dueDate": { "type": "string", "maxLength": 64 },
+        "completed": { "type": "boolean" },
+        "tag": { "type": "string", "maxLength": 32 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "title", "completed"]
+    }
+  },
+  "firestore": {
+    "/registered_users/{userId}": {
+      "schema": { "$ref": "#/entities/RegisteredUser" },
+      "description": "Stores registered user slots for 5-user cap and spam mitigation"
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Stores user profile and academic preferences"
+    },
+    "/users/{userId}/units/{unitId}": {
+      "schema": { "$ref": "#/entities/Unit" },
+      "description": "Subcollection of units owned by this student"
+    },
+    "/users/{userId}/units/{unitId}/assessments/{assessmentId}": {
+      "schema": { "$ref": "#/entities/Assessment" },
+      "description": "Subcollection of weighted assessments for each unit"
+    },
+    "/users/{userId}/tasks/{taskId}": {
+      "schema": { "$ref": "#/entities/MicroTask" },
+      "description": "Subcollection of unweighted micro-tasks and Canvas to-dos"
+    }
+  }
+}
