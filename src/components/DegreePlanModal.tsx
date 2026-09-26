@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { useDashboardStore } from '../store/useDashboardStore';
 import { Dialog } from './ui/Dialog';
 import { DegreePlanExtraction, Unit } from '../types/dashboard';
+import { STANDARD_SEMESTERS } from '../lib/semesters';
 import {
   FileImage,
   UploadCloud,
@@ -29,17 +30,7 @@ interface EditablePlanUnit {
   year: number;
 }
 
-const COMMON_SEMESTERS = [
-  'Semester 1, 2026',
-  'Semester 2, 2026',
-  'Summer 2026/27',
-  'Semester 1, 2027',
-  'Semester 2, 2027',
-  'Semester 1, 2028',
-  'Semester 2, 2028',
-  'Semester 1, 2029',
-  'Semester 2, 2029',
-];
+const COMMON_SEMESTERS = STANDARD_SEMESTERS;
 
 export const DegreePlanModal: React.FC<DegreePlanModalProps> = ({ isOpen, onClose }) => {
   const {

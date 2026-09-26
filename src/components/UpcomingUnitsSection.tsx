@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useDashboardStore } from '../store/useDashboardStore';
 import { Unit } from '../types/dashboard';
+import { STANDARD_SEMESTERS } from '../lib/semesters';
 import {
   Calendar,
   ChevronDown,
@@ -202,13 +203,11 @@ export const UpcomingUnitsSection: React.FC<UpcomingUnitsSectionProps> = ({
                             onChange={(e) => setTempSemester(e.target.value)}
                             className="px-2 py-0.5 text-xs font-mono bg-white dark:bg-zinc-900 border border-emerald-500 rounded text-zinc-900 dark:text-zinc-100"
                           >
-                            <option value="Semester 1, 2026">Semester 1, 2026</option>
-                            <option value="Semester 2, 2026">Semester 2, 2026</option>
-                            <option value="Summer 2026/27">Summer 2026/27</option>
-                            <option value="Semester 1, 2027">Semester 1, 2027</option>
-                            <option value="Semester 2, 2027">Semester 2, 2027</option>
-                            <option value="Semester 1, 2028">Semester 1, 2028</option>
-                            <option value="Semester 2, 2028">Semester 2, 2028</option>
+                            {STANDARD_SEMESTERS.map((sem) => (
+                              <option key={sem} value={sem}>
+                                {sem}
+                              </option>
+                            ))}
                           </select>
                           <button
                             onClick={() => handleSaveSemester(unit.id)}

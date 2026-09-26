@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useDashboardStore } from './store/useDashboardStore';
+import { STANDARD_SEMESTERS } from './lib/semesters';
 import { Navbar } from './components/Navbar';
 import { LoginView } from './components/LoginView';
 import { OnboardingFlow } from './components/OnboardingFlow';
@@ -84,21 +85,9 @@ export default function App() {
     return matchesSemester && hasActiveSyllabus;
   });
 
-  const DEFAULT_SEMESTERS = [
-    'Semester 1, 2026',
-    'Semester 2, 2026',
-    'Summer 2026/27',
-    'Semester 1, 2027',
-    'Semester 2, 2027',
-    'Semester 1, 2028',
-    'Semester 2, 2028',
-    'Semester 1, 2029',
-    'Semester 2, 2029',
-  ];
-
   const availableSemesters = Array.from(
     new Set([
-      ...DEFAULT_SEMESTERS,
+      ...STANDARD_SEMESTERS,
       currentSemester,
       ...units.map((u) => u.semester?.trim()).filter(Boolean) as string[],
     ])

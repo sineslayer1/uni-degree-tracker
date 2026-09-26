@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Dialog } from './ui/Dialog';
 import { useDashboardStore } from '../store/useDashboardStore';
 import { Unit, UnitZodSchema } from '../types/dashboard';
+import { STANDARD_SEMESTERS } from '../lib/semesters';
 import { Plus, Trash2 } from 'lucide-react';
 
 interface AddUnitModalProps {
@@ -131,12 +132,17 @@ export const AddUnitModal: React.FC<AddUnitModalProps> = ({ isOpen, onClose }) =
 
           <div className="sm:col-span-6">
             <label className="text-[11px] font-mono text-zinc-500 block mb-1">Semester</label>
-            <input
-              type="text"
+            <select
               value={semester}
               onChange={(e) => setSemester(e.target.value)}
-              className="w-full px-3 py-1.5 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-md"
-            />
+              className="w-full px-3 py-1.5 text-xs font-mono bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-md text-zinc-900 dark:text-zinc-100"
+            >
+              {STANDARD_SEMESTERS.map((sem) => (
+                <option key={sem} value={sem}>
+                  {sem}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
