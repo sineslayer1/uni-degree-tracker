@@ -35,6 +35,7 @@ export default function App() {
     isAuthenticated,
     isOnboarded,
     isAuthLoading,
+    isDataLoading,
     initAuthListener,
   } = useDashboardStore();
 
@@ -48,7 +49,7 @@ export default function App() {
     return () => unsubscribe();
   }, [initAuthListener]);
 
-  if (isAuthLoading) {
+  if (isAuthLoading || isDataLoading) {
     return (
       <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col items-center justify-center space-y-4">
         <Loader2 className="w-8 h-8 animate-spin text-zinc-900 dark:text-zinc-100" />

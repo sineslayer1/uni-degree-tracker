@@ -1,10 +1,13 @@
 import { Unit } from '../types/dashboard';
 import { calculateAcademicMetrics, calculateUnitResult } from './grade-calculator';
 
+export type CsvExportScope = 'all' | 'finished' | 'in_progress';
+
 export interface ExportDataParams {
   units: Unit[];
   isWhatIfMode: boolean;
   metricView: 'WAM' | 'SAM';
+  scope?: CsvExportScope;
   studentName?: string;
   studentEmail?: string;
   degreeName?: string;
@@ -28,18 +31,31 @@ export function generateAcademicCsv({
   units,
   isWhatIfMode,
   metricView,
+  scope = 'all',
   studentName = 'Student',
   studentEmail = '',
   degreeName = 'Engineering Degree',
   targetWam = 75,
 }: ExportDataParams): string {
-  const metrics = calculateAcademicMetrics(units, isWhatIfMode);
+  let exportUnits = units;
+  let scopeLabel = 'All Units (Full Record & Projections)';
+
+  if (scope === 'finished') {
+    exportUnits = units.filter((u) => u.status === 'finished');
+    scopeLabel = 'Finished Units Archive (Completed Subjects)';
+  } else if (scope === 'in_progress') {
+    exportUnits = units.filter((u) => u.status === 'active' || (u.status !== 'finished' && u.status !== 'upcoming'));
+    scopeLabel = 'Units In Progress (Active Term Coursework)';
+  }
+
+  const metrics = calculateAcademicMetrics(exportUnits, isWhatIfMode);
   const dateStr = new Date().toLocaleString();
 
   const lines: string[] = [];
 
   // Title & Metadata Section
   lines.push(rowToCsv(['APEX ENGINEERING ACADEMIC RECORD & HURDLE REPORT']));
+  lines.push(rowToCsv(['Export Scope', scopeLabel]));
   lines.push(rowToCsv(['Generated At', dateStr]));
   lines.push(rowToCsv(['Student Name', studentName]));
   if (studentEmail) lines.push(rowToCsv(['Student Email', studentEmail]));
@@ -100,7 +116,7 @@ export function generateAcademicCsv({
     ])
   );
 
-  for (const unit of units) {
+  for (const unit of exportUnits) {
     const res = calculateUnitResult(unit, isWhatIfMode);
     lines.push(
       rowToCsv([
@@ -140,7 +156,7 @@ export function generateAcademicCsv({
     ])
   );
 
-  for (const unit of units) {
+  for (const unit of exportUnits) {
     for (const a of unit.assessments) {
       const isCompetency = a.kind === 'competency_hurdle' || a.kind === 'foundation_requirement';
       let hurdleStatusStr = 'N/A';
@@ -214,7 +230,13 @@ export function downloadAcademicCsv(params: ExportDataParams) {
     .toLowerCase()
     .replace(/[^a-z0-9_-]/g, '_');
   const dateStamp = new Date().toISOString().split('T')[0];
-  const filename = `apex_${cleanName}_wam_report_${dateStamp}.csv`;
+  const scopeSuffix =
+    params.scope === 'finished'
+      ? 'finished_units'
+      : params.scope === 'in_progress'
+      ? 'in_progress_units'
+      : 'all_units';
+  const filename = `apex_${cleanName}_${scopeSuffix}_${dateStamp}.csv`;
 
   const link = document.createElement('a');
   link.href = url;

@@ -64,6 +64,7 @@ interface DashboardState {
     status: 'active' | 'finished' | 'upcoming',
     extra?: { finalMark?: number | null; semester?: string }
   ) => Promise<void>;
+  reactivateUnit: (unitId: string) => Promise<void>;
   batchImportUpcomingUnits: (newUnits: Omit<Unit, 'id'>[]) => Promise<void>;
   setOnboardingData: (data: {
     preferredName: string;
@@ -433,8 +434,87 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       return {
         ...u,
         status,
-        ...(extra?.finalMark !== undefined ? { finalMark: extra.finalMark } : {}),
+        finalMark: extra?.finalMark !== undefined ? extra.finalMark : status === 'active' ? null : u.finalMark,
         ...(extra?.semester ? { semester: extra.semester.trim() } : {}),
+        ...(status === 'active' ? { syllabusUploaded: true } : {}),
+      };
+    });
+
+    set({ units: updated, syncStatus: 'saving' });
+    saveLocalState(userId, updated, get().tasks, metricView, isWhatIfMode, {
+      degreeName,
+      targetWam,
+      displayName,
+      userEmail,
+      currentSemester,
+      totalDegreeCreditPoints,
+      degreePlanImage,
+      isOnboarded,
+    });
+
+    const changedUnit = updated.find((u) => u.id === unitId);
+    if (userId && changedUnit) {
+      try {
+        await saveUnitToFirestore(userId, changedUnit);
+        set({ syncStatus: 'synced' });
+      } catch {
+        set({ syncStatus: 'saved' });
+      }
+    } else {
+      set({ syncStatus: 'saved' });
+    }
+  },
+
+  reactivateUnit: async (unitId: string) => {
+    const { userId, metricView, isWhatIfMode, currentSemester, degreeName, targetWam, displayName, userEmail, totalDegreeCreditPoints, degreePlanImage, isOnboarded } = get();
+
+    const updated = get().units.map((u) => {
+      if (u.id !== unitId) return u;
+
+      // Unseal assessments so the reactivated unit is in-progress
+      const assessments =
+        u.assessments && u.assessments.length > 0
+          ? u.assessments.map((a, idx) => {
+              if (idx === u.assessments.length - 1 || a.isHurdle) {
+                return { ...a, completed: false, mark: null };
+              }
+              return a;
+            })
+          : [
+              {
+                id: `a-act-1-${Date.now()}`,
+                unitId: u.id,
+                title: 'Continuous Coursework / Assignments',
+                weight: 50,
+                mark: null,
+                isHurdle: false,
+                hurdleMinMark: 0,
+                completed: false,
+                kind: 'standard' as const,
+                hypotheticalMark: 75,
+              },
+              {
+                id: `a-act-2-${Date.now()}`,
+                unitId: u.id,
+                title: 'Final Examination',
+                weight: 50,
+                mark: null,
+                isHurdle: true,
+                hurdleMinMark: 45,
+                hurdleDescription: 'Double-pass examination hurdle',
+                completed: false,
+                kind: 'standard' as const,
+                hypotheticalMark: 75,
+              },
+            ];
+
+      return {
+        ...u,
+        status: 'active' as const,
+        semester: currentSemester,
+        finalMark: null,
+        syllabusUploaded: true,
+        assessments,
       };
     });
 
@@ -628,10 +708,18 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
         // Determine if user has already onboarded
         const hasOnboarded = Boolean(
           userIsOnboarded === true ||
+          userProfileSnap.exists() ||
           (userUnits && userUnits.length > 0) ||
           (userDegree && userDegree.trim().length > 0) ||
-          local?.isOnboarded
+          local?.isOnboarded ||
+          (typeof window !== 'undefined' && localStorage.getItem(`apex_onboarded_${uid}`) === 'true')
         );
+
+        if (typeof window !== 'undefined' && hasOnboarded) {
+          try {
+            localStorage.setItem(`apex_onboarded_${uid}`, 'true');
+          } catch {}
+        }
 
         set({
           units: userUnits,
@@ -674,7 +762,8 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       set({ isAuthLoading: false, authError: res.error || 'Login failed' });
       return { success: false, error: res.error };
     }
-    set({ isAuthLoading: false, isAuthenticated: true });
+    // Keep isDataLoading true until onAuthStateChanged finishes fetching Firestore profile
+    set({ isAuthLoading: false, isDataLoading: true, isAuthenticated: true });
     return { success: true };
   },
 
@@ -683,30 +772,76 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     const uid = cleanEmail.replace(/[^a-zA-Z0-9]/g, '_');
     const name = displayName || cleanEmail.split('@')[0];
 
-    const local = loadLocalState(uid);
-    const unitsToLoad = local?.units && local.units.length > 0 ? local.units : [];
-    const tasksToLoad = local?.tasks && local.tasks.length > 0 ? local.tasks : get().tasks;
-    const onboardedStatus = Boolean(local?.isOnboarded);
-
     set({
+      isDataLoading: true,
       isAuthenticated: true,
       userId: uid,
       userEmail: cleanEmail,
       studentId: cleanEmail.split('@')[0],
-      displayName: name,
-      degreeName: local?.degreeName || get().degreeName,
-      targetWam: local?.targetWam || get().targetWam,
+      authError: null,
+      syncStatus: 'saving',
+    });
+
+    const local = loadLocalState(uid);
+    let unitsToLoad = local?.units && local.units.length > 0 ? local.units : [];
+    let tasksToLoad = local?.tasks && local.tasks.length > 0 ? local.tasks : get().tasks;
+    let userDegree = local?.degreeName || get().degreeName;
+    let userTargetWam = local?.targetWam || get().targetWam;
+    let userName = local?.displayName || name;
+    let onboardedStatus = Boolean(
+      local?.isOnboarded ||
+      local?.degreeName ||
+      (typeof window !== 'undefined' && localStorage.getItem(`apex_onboarded_${uid}`) === 'true')
+    );
+
+    try {
+      const snap = await getDoc(doc(db, 'users', uid));
+      if (snap.exists()) {
+        const d = snap.data();
+        if (d.degreeName) userDegree = d.degreeName;
+        if (d.targetWam) userTargetWam = Number(d.targetWam);
+        if (d.displayName) userName = d.displayName;
+        if (typeof d.isOnboarded === 'boolean') {
+          onboardedStatus = d.isOnboarded;
+        } else {
+          onboardedStatus = true;
+        }
+      }
+      const fireUnits = await loadUserUnitsFromFirestore(uid);
+      if (fireUnits && fireUnits.length > 0) {
+        unitsToLoad = fireUnits;
+        onboardedStatus = true;
+      }
+      const fireTasks = await loadUserTasksFromFirestore(uid);
+      if (fireTasks && fireTasks.length > 0) {
+        tasksToLoad = fireTasks;
+      }
+    } catch (e) {
+      console.warn('Could not fetch user profile from Firestore in loginDirect:', e);
+    }
+
+    if (typeof window !== 'undefined' && onboardedStatus) {
+      try {
+        localStorage.setItem(`apex_onboarded_${uid}`, 'true');
+      } catch {}
+    }
+
+    set({
+      displayName: userName,
+      degreeName: userDegree,
+      targetWam: userTargetWam,
       isOnboarded: onboardedStatus,
       units: unitsToLoad,
       tasks: tasksToLoad,
-      authError: null,
+      isDataLoading: false,
       syncStatus: 'saved',
     });
 
     saveLocalState(uid, unitsToLoad, tasksToLoad, get().metricView, get().isWhatIfMode, {
-      displayName: name,
-      degreeName: local?.degreeName || get().degreeName,
-      targetWam: local?.targetWam || get().targetWam,
+      displayName: userName,
+      degreeName: userDegree,
+      targetWam: userTargetWam,
+      userEmail: cleanEmail,
       isOnboarded: onboardedStatus,
     });
   },
@@ -729,6 +864,12 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       targetWam,
       isOnboarded: true,
     });
+
+    if (typeof window !== 'undefined' && userId) {
+      try {
+        localStorage.setItem(`apex_onboarded_${userId}`, 'true');
+      } catch {}
+    }
 
     if (userId) {
       try {

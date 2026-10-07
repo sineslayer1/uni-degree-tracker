@@ -13,19 +13,13 @@ import {
 } from 'lucide-react';
 
 export const FinishedUnitsSection: React.FC = () => {
-  const { units, currentSemester, updateUnitStatus } = useDashboardStore();
+  const { units, currentSemester, updateUnitStatus, reactivateUnit } = useDashboardStore();
   const [isExpanded, setIsExpanded] = useState(false);
   const [editingUnitId, setEditingUnitId] = useState<string | null>(null);
   const [tempMark, setTempMark] = useState<string>('');
 
-  // Finished units: either explicitly status === 'finished' or all assessments completed & marked
-  const finishedUnits = units.filter(
-    (u) =>
-      u.status === 'finished' ||
-      (u.status !== 'upcoming' &&
-        u.assessments.length > 0 &&
-        u.assessments.every((a) => a.completed && typeof a.mark === 'number'))
-  );
+  // Finished units are strictly those with finished status
+  const finishedUnits = units.filter((u) => u.status === 'finished');
 
   if (finishedUnits.length === 0) {
     return null;
@@ -50,10 +44,12 @@ export const FinishedUnitsSection: React.FC = () => {
     const currentMark =
       typeof unit.finalMark === 'number'
         ? unit.finalMark
-        : unit.assessments.reduce(
+        : unit.assessments?.length > 0
+        ? unit.assessments.reduce(
             (sum, a) => sum + ((a.mark || 0) * a.weight) / 100,
             0
-          );
+          )
+        : 75;
     setTempMark(String(Math.round(currentMark)));
     setEditingUnitId(unit.id);
   };
@@ -67,7 +63,7 @@ export const FinishedUnitsSection: React.FC = () => {
   };
 
   const handleReactivate = async (unitId: string) => {
-    await updateUnitStatus(unitId, 'active');
+    await reactivateUnit(unitId);
   };
 
   const getGradePill = (mark: number) => {

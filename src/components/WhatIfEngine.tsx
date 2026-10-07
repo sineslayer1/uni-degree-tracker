@@ -6,11 +6,19 @@ import { Sparkles, RotateCcw, Target, ShieldCheck } from 'lucide-react';
 export const WhatIfEngine: React.FC = () => {
   const {
     units,
+    currentSemester,
     isWhatIfMode,
     toggleWhatIfMode,
     resetWhatIfMarks,
     updateHypotheticalMark,
   } = useDashboardStore();
+
+  const semesterUnits = units.filter((u) => {
+    if (u.status === 'finished' || u.status === 'upcoming') return false;
+    const unitSem = u.semester ? u.semester.trim().toLowerCase() : '';
+    const activeSem = currentSemester ? currentSemester.trim().toLowerCase() : '';
+    return unitSem === activeSem && (u.syllabusUploaded || (u.assessments && u.assessments.length > 0));
+  });
 
   if (!isWhatIfMode) {
     return (
@@ -31,8 +39,30 @@ export const WhatIfEngine: React.FC = () => {
     );
   }
 
+  if (semesterUnits.length === 0) {
+    return (
+      <div className="bg-emerald-50/40 dark:bg-emerald-950/20 border border-emerald-200/80 dark:border-emerald-900/60 rounded-xl p-4 sm:p-5 text-xs font-mono space-y-1">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-emerald-900 dark:text-emerald-200 font-semibold">
+            <Sparkles className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            <span>Interactive What-If Grade Simulator ({currentSemester})</span>
+          </div>
+          <button
+            onClick={toggleWhatIfMode}
+            className="text-[11px] text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 underline cursor-pointer"
+          >
+            Turn Off
+          </button>
+        </div>
+        <p className="text-zinc-600 dark:text-zinc-400 mt-1">
+          No active coursework units found for <strong>{currentSemester}</strong>. Units in this semester will appear here for simulation once active.
+        </p>
+      </div>
+    );
+  }
+
   const applyPreset = (targetMark: number) => {
-    units.forEach((u) => {
+    semesterUnits.forEach((u) => {
       u.assessments.forEach((a) => {
         if (!a.completed && a.mark === null) {
           updateHypotheticalMark(u.id, a.id, targetMark);
@@ -49,11 +79,11 @@ export const WhatIfEngine: React.FC = () => {
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
             <h3 className="text-sm font-bold text-emerald-950 dark:text-emerald-100">
-              Interactive What-If Grade Simulator
+              Interactive What-If Grade Simulator ({currentSemester})
             </h3>
           </div>
           <p className="text-xs text-emerald-800/80 dark:text-emerald-300/80 mt-0.5">
-            Drag the grade sliders on any assessment to simulate your final WAM and verify pass hurdles in real time.
+            Simulate hypothetical assessment marks and test double-pass hurdle scenarios for {currentSemester}.
           </p>
         </div>
 
@@ -89,7 +119,7 @@ export const WhatIfEngine: React.FC = () => {
 
       {/* Mobile Card View (Phone Screens) */}
       <div className="sm:hidden space-y-2.5">
-        {units.map((unit) => {
+        {semesterUnits.map((unit) => {
           const res = calculateUnitResult(unit, isWhatIfMode);
           const remainingWeight = 100 - res.completedWeight;
           const reqCredit = calculateRequiredMark(res.earnedMark, res.completedWeight, 65);
@@ -165,7 +195,7 @@ export const WhatIfEngine: React.FC = () => {
             </tr>
           </thead>
           <tbody className="divide-y divide-emerald-100/60 dark:divide-emerald-800/30">
-            {units.map((unit) => {
+            {semesterUnits.map((unit) => {
               const res = calculateUnitResult(unit, isWhatIfMode);
               const remainingWeight = 100 - res.completedWeight;
               const reqCredit = calculateRequiredMark(res.earnedMark, res.completedWeight, 65);

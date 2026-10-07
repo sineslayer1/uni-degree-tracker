@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useDashboardStore } from '../store/useDashboardStore';
-import { downloadAcademicCsv } from '../lib/export-csv';
+import { downloadAcademicCsv, CsvExportScope } from '../lib/export-csv';
 import { ThemeToggle } from './ThemeToggle';
 import {
   Sparkles,
@@ -12,6 +12,7 @@ import {
   X,
   Download,
   BookMarked,
+  ChevronDown,
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -43,17 +44,20 @@ export const Navbar: React.FC<NavbarProps> = ({
   } = useDashboardStore();
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
 
-  const handleExportCsv = () => {
+  const handleExportCsv = (scope: CsvExportScope = 'all') => {
     downloadAcademicCsv({
       units,
       isWhatIfMode,
       metricView,
+      scope,
       studentName: displayName || undefined,
       studentEmail: userEmail || undefined,
       degreeName,
       targetWam,
     });
+    setExportMenuOpen(false);
   };
 
   return (
@@ -144,15 +148,54 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span className="sm:hidden">Syllabus</span>
             </button>
 
-            {/* Export CSV Data Button */}
-            <button
-              onClick={handleExportCsv}
-              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 rounded-lg text-xs font-mono font-medium transition-colors shadow-2xs cursor-pointer shrink-0"
-              title="Download academic record, WAM, and hurdle summary as CSV"
-            >
-              <Download className="w-3.5 h-3.5 text-zinc-600 dark:text-zinc-400" />
-              <span className="hidden md:inline">Export CSV</span>
-            </button>
+            {/* Export CSV Data Button with Dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setExportMenuOpen(!exportMenuOpen)}
+                className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 rounded-lg text-xs font-mono font-medium transition-colors shadow-2xs cursor-pointer shrink-0"
+                title="Download academic record, WAM, and hurdle summary as CSV"
+                aria-expanded={exportMenuOpen}
+              >
+                <Download className="w-3.5 h-3.5 text-zinc-600 dark:text-zinc-400" />
+                <span className="hidden md:inline">Export CSV</span>
+                <ChevronDown className="w-3 h-3 text-zinc-400" />
+              </button>
+
+              {exportMenuOpen && (
+                <>
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setExportMenuOpen(false)}
+                  />
+                  <div className="absolute right-0 mt-1.5 w-60 z-50 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-lg py-1.5 text-xs font-mono animate-in fade-in slide-in-from-top-1 duration-150">
+                    <div className="px-3 py-1.5 border-b border-zinc-100 dark:border-zinc-800 text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
+                      Export CSV Options
+                    </div>
+                    <button
+                      onClick={() => handleExportCsv('all')}
+                      className="w-full text-left px-3 py-2 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-800 dark:text-zinc-200 flex flex-col gap-0.5 cursor-pointer"
+                    >
+                      <span className="font-semibold text-emerald-600 dark:text-emerald-400">All Units (Complete)</span>
+                      <span className="text-[10px] text-zinc-500">Entire academic record & projections</span>
+                    </button>
+                    <button
+                      onClick={() => handleExportCsv('finished')}
+                      className="w-full text-left px-3 py-2 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-800 dark:text-zinc-200 flex flex-col gap-0.5 cursor-pointer"
+                    >
+                      <span className="font-semibold text-teal-600 dark:text-teal-400">Finished Units Only</span>
+                      <span className="text-[10px] text-zinc-500">Completed subjects & recorded final marks</span>
+                    </button>
+                    <button
+                      onClick={() => handleExportCsv('in_progress')}
+                      className="w-full text-left px-3 py-2 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-800 dark:text-zinc-200 flex flex-col gap-0.5 cursor-pointer"
+                    >
+                      <span className="font-semibold text-blue-600 dark:text-blue-400">Units In Progress Only</span>
+                      <span className="text-[10px] text-zinc-500">Active coursework & assessments</span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
 
             {/* Degree Plan Photo / Roadmap Button */}
             {onOpenDegreePlanModal && (
@@ -259,18 +302,40 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
 
             {/* Mobile Action Buttons */}
-            <div className="grid grid-cols-2 gap-2 pt-1">
-              <button
-                onClick={() => {
-                  handleExportCsv();
-                  setMobileMenuOpen(false);
-                }}
-                className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 rounded-xl text-xs font-semibold shadow-2xs border border-zinc-200 dark:border-zinc-700"
-              >
-                <Download className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Export CSV</span>
-              </button>
+            <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800/80 space-y-1.5">
+              <span className="text-[11px] font-mono text-zinc-400 block px-1">Export Academic CSV:</span>
+              <div className="grid grid-cols-3 gap-1.5 text-[11px] font-mono">
+                <button
+                  onClick={() => {
+                    handleExportCsv('all');
+                    setMobileMenuOpen(false);
+                  }}
+                  className="py-2 px-1 bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 rounded-lg text-center font-medium shadow-2xs border border-zinc-200 dark:border-zinc-700"
+                >
+                  All Units
+                </button>
+                <button
+                  onClick={() => {
+                    handleExportCsv('finished');
+                    setMobileMenuOpen(false);
+                  }}
+                  className="py-2 px-1 bg-teal-50 dark:bg-teal-950/60 text-teal-800 dark:text-teal-200 rounded-lg text-center font-medium border border-teal-200 dark:border-teal-800"
+                >
+                  Finished
+                </button>
+                <button
+                  onClick={() => {
+                    handleExportCsv('in_progress');
+                    setMobileMenuOpen(false);
+                  }}
+                  className="py-2 px-1 bg-blue-50 dark:bg-blue-950/60 text-blue-800 dark:text-blue-200 rounded-lg text-center font-medium border border-blue-200 dark:border-blue-800"
+                >
+                  In Progress
+                </button>
+              </div>
+            </div>
 
+            <div className="grid grid-cols-2 gap-2 pt-1">
               {onOpenDegreePlanModal && (
                 <button
                   onClick={() => {
