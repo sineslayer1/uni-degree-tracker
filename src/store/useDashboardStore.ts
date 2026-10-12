@@ -340,7 +340,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   photoURL: '',
   userId: null,
   isAuthenticated: false,
-  isOnboarded: Boolean(cached?.isOnboarded && cached?.degreeName),
+  isOnboarded: Boolean(cached?.isOnboarded || cached?.degreeName || (cached?.units && cached.units.length > 0)),
   isAuthLoading: true,
   isDataLoading: false,
   syncStatus: 'saved',
@@ -601,7 +601,17 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   },
 
   initAuthListener: () => {
+    // Safety fallback timeout: under NO circumstances should loading exceed 2.5s
+    const safetyTimer = setTimeout(() => {
+      const state = get();
+      if (state.isAuthLoading || state.isDataLoading) {
+        set({ isAuthLoading: false, isDataLoading: false });
+      }
+    }, 2500);
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      clearTimeout(safetyTimer);
+
       if (!firebaseUser) {
         const local = loadLocalState(get().userId);
         if (local) {
@@ -618,21 +628,28 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
             degreePlanImage: local.degreePlanImage || null,
             isOnboarded: Boolean(local.isOnboarded || (local.degreeName && local.units?.length > 0)),
             isAuthLoading: false,
+            isDataLoading: false,
           });
         } else {
-          set({ isAuthLoading: false });
+          set({ isAuthLoading: false, isDataLoading: false });
         }
         return;
       }
-
-      set({ isDataLoading: true, syncStatus: 'saving', isAuthLoading: false });
 
       const email = firebaseUser.email || '';
       const uid = firebaseUser.uid;
       const name = firebaseUser.displayName || email.split('@')[0] || '';
 
-      // Hydrate from localStorage first for instant UI response
+      // Instant hydration from local storage
       const local = loadLocalState(uid);
+      const isLocallyOnboarded = Boolean(
+        local?.isOnboarded ||
+        local?.degreeName ||
+        (local?.units && local.units.length > 0) ||
+        (typeof window !== 'undefined' && localStorage.getItem(`apex_onboarded_${uid}`) === 'true')
+      );
+
+      // Instantly unblock the UI if local profile is available
       if (local) {
         set({
           isAuthenticated: true,
@@ -648,7 +665,10 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
           currentSemester: local.currentSemester || get().currentSemester,
           totalDegreeCreditPoints: local.totalDegreeCreditPoints || get().totalDegreeCreditPoints,
           degreePlanImage: local.degreePlanImage || get().degreePlanImage,
-          isOnboarded: Boolean(local.isOnboarded || local.degreeName),
+          isOnboarded: isLocallyOnboarded,
+          isAuthLoading: false,
+          isDataLoading: !isLocallyOnboarded,
+          syncStatus: 'saving',
         });
       } else {
         set({
@@ -658,12 +678,21 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
           displayName: name,
           photoURL: firebaseUser.photoURL || '',
           studentId: email.split('@')[0],
+          isOnboarded: isLocallyOnboarded,
+          isAuthLoading: false,
+          isDataLoading: !isLocallyOnboarded,
+          syncStatus: 'saving',
         });
       }
 
       try {
-        // Query Firestore for user profile
-        const userProfileSnap = await getDoc(doc(db, 'users', uid));
+        // Query Firestore profile, units, and tasks in PARALLEL
+        const [userProfileSnap, userUnits, userTasks] = await Promise.all([
+          getDoc(doc(db, 'users', uid)),
+          loadUserUnitsFromFirestore(uid),
+          loadUserTasksFromFirestore(uid),
+        ]);
+
         let userDegree = get().degreeName;
         let userTargetWam = get().targetWam;
         let userIsOnboarded = get().isOnboarded;
@@ -685,34 +714,26 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
           }
         }
 
-        // Query Firestore for user's units and tasks
-        let userUnits = await loadUserUnitsFromFirestore(uid);
-        let userTasks = await loadUserTasksFromFirestore(uid);
-
-        // Fallback to local units if Firestore has not finished saving or is empty
-        if ((!userUnits || userUnits.length === 0) && local?.units && local.units.length > 0) {
-          userUnits = local.units;
-          // Synchronize back to Firestore
-          for (const u of userUnits) {
-            saveUnitToFirestore(uid, u).catch(() => {});
-          }
+        // Merge units if cloud is empty but local has units
+        let resolvedUnits = userUnits;
+        if ((!resolvedUnits || resolvedUnits.length === 0) && local?.units && local.units.length > 0) {
+          resolvedUnits = local.units;
+          // Synchronize back to Firestore in background without blocking
+          Promise.all(resolvedUnits.map((u) => saveUnitToFirestore(uid, u))).catch(() => {});
         }
 
-        if ((!userTasks || userTasks.length === 0) && local?.tasks && local.tasks.length > 0) {
-          userTasks = local.tasks;
-          for (const t of userTasks) {
-            saveTaskToFirestore(uid, t).catch(() => {});
-          }
+        let resolvedTasks = userTasks;
+        if ((!resolvedTasks || resolvedTasks.length === 0) && local?.tasks && local.tasks.length > 0) {
+          resolvedTasks = local.tasks;
+          Promise.all(resolvedTasks.map((t) => saveTaskToFirestore(uid, t))).catch(() => {});
         }
 
-        // Determine if user has already onboarded
         const hasOnboarded = Boolean(
           userIsOnboarded === true ||
           userProfileSnap.exists() ||
-          (userUnits && userUnits.length > 0) ||
+          (resolvedUnits && resolvedUnits.length > 0) ||
           (userDegree && userDegree.trim().length > 0) ||
-          local?.isOnboarded ||
-          (typeof window !== 'undefined' && localStorage.getItem(`apex_onboarded_${uid}`) === 'true')
+          isLocallyOnboarded
         );
 
         if (typeof window !== 'undefined' && hasOnboarded) {
@@ -722,8 +743,8 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
         }
 
         set({
-          units: userUnits,
-          tasks: userTasks,
+          units: resolvedUnits,
+          tasks: resolvedTasks,
           displayName: userName,
           degreeName: userDegree,
           targetWam: userTargetWam,
@@ -735,7 +756,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
           syncStatus: 'synced',
         });
 
-        saveLocalState(uid, userUnits, userTasks, get().metricView, get().isWhatIfMode, {
+        saveLocalState(uid, resolvedUnits, resolvedTasks, get().metricView, get().isWhatIfMode, {
           displayName: userName,
           degreeName: userDegree,
           targetWam: userTargetWam,
@@ -751,7 +772,10 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       }
     });
 
-    return unsubscribe;
+    return () => {
+      clearTimeout(safetyTimer);
+      unsubscribe();
+    };
   },
 
 
@@ -762,8 +786,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       set({ isAuthLoading: false, authError: res.error || 'Login failed' });
       return { success: false, error: res.error };
     }
-    // Keep isDataLoading true until onAuthStateChanged finishes fetching Firestore profile
-    set({ isAuthLoading: false, isDataLoading: true, isAuthenticated: true });
+    set({ isAuthLoading: false, isAuthenticated: true });
     return { success: true };
   },
 
@@ -771,16 +794,6 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     const cleanEmail = email.trim().toLowerCase();
     const uid = cleanEmail.replace(/[^a-zA-Z0-9]/g, '_');
     const name = displayName || cleanEmail.split('@')[0];
-
-    set({
-      isDataLoading: true,
-      isAuthenticated: true,
-      userId: uid,
-      userEmail: cleanEmail,
-      studentId: cleanEmail.split('@')[0],
-      authError: null,
-      syncStatus: 'saving',
-    });
 
     const local = loadLocalState(uid);
     let unitsToLoad = local?.units && local.units.length > 0 ? local.units : [];
@@ -794,8 +807,30 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       (typeof window !== 'undefined' && localStorage.getItem(`apex_onboarded_${uid}`) === 'true')
     );
 
+    // If local profile is available, unblock immediately
+    set({
+      isAuthenticated: true,
+      userId: uid,
+      userEmail: cleanEmail,
+      studentId: cleanEmail.split('@')[0],
+      displayName: userName,
+      degreeName: userDegree,
+      targetWam: userTargetWam,
+      isOnboarded: onboardedStatus,
+      units: unitsToLoad,
+      tasks: tasksToLoad,
+      authError: null,
+      isDataLoading: !onboardedStatus,
+      syncStatus: 'saving',
+    });
+
     try {
-      const snap = await getDoc(doc(db, 'users', uid));
+      const [snap, fireUnits, fireTasks] = await Promise.all([
+        getDoc(doc(db, 'users', uid)),
+        loadUserUnitsFromFirestore(uid),
+        loadUserTasksFromFirestore(uid),
+      ]);
+
       if (snap.exists()) {
         const d = snap.data();
         if (d.degreeName) userDegree = d.degreeName;
@@ -807,12 +842,10 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
           onboardedStatus = true;
         }
       }
-      const fireUnits = await loadUserUnitsFromFirestore(uid);
       if (fireUnits && fireUnits.length > 0) {
         unitsToLoad = fireUnits;
         onboardedStatus = true;
       }
-      const fireTasks = await loadUserTasksFromFirestore(uid);
       if (fireTasks && fireTasks.length > 0) {
         tasksToLoad = fireTasks;
       }

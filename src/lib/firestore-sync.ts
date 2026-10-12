@@ -28,54 +28,120 @@ function sanitizeData<T extends Record<string, any>>(data: T): Record<string, an
 
 /**
  * Loads all units and nested assessments belonging to this user from Firestore.
+ * Optimizations:
+ * 1. Checks for embedded assessments array on unit doc for instant 1-query loading.
+ * 2. Uses parallel Promise.all across all unit docs instead of serial loop.
  */
 export async function loadUserUnitsFromFirestore(userId: string): Promise<Unit[]> {
   try {
     const unitsSnap = await getDocs(collection(db, 'users', userId, 'units'));
-    const units: Unit[] = [];
+    if (unitsSnap.empty) return [];
 
-    for (const unitDoc of unitsSnap.docs) {
-      const unitData = unitDoc.data();
-      const assessSnap = await getDocs(
-        collection(db, 'users', userId, 'units', unitDoc.id, 'assessments')
-      );
+    const units: Unit[] = await Promise.all(
+      unitsSnap.docs.map(async (unitDoc) => {
+        const unitData = unitDoc.data();
 
-      const assessments: Assessment[] = assessSnap.docs.map((aDoc) => {
-        const aData = aDoc.data();
-        return {
-          id: aDoc.id,
-          unitId: unitDoc.id,
-          title: aData.title || 'Assessment',
-          weight: typeof aData.weight === 'number' ? aData.weight : 0,
-          mark: typeof aData.mark === 'number' ? aData.mark : null,
-          isHurdle: Boolean(aData.isHurdle),
-          hurdleMinMark: typeof aData.hurdleMinMark === 'number' ? aData.hurdleMinMark : 0,
-          hurdleDescription: aData.hurdleDescription || '',
-          dueDate: aData.dueDate || '',
-          completed: Boolean(aData.completed),
-          hypotheticalMark: typeof aData.hypotheticalMark === 'number' ? aData.hypotheticalMark : null,
-          kind: (aData.kind as AssessmentKind) || 'standard',
-          isCompetencyPassed: Boolean(aData.isCompetencyPassed),
-          hypotheticalCompetency:
-            typeof aData.hypotheticalCompetency === 'boolean' ? aData.hypotheticalCompetency : null,
-          pointsAwarded: typeof aData.pointsAwarded === 'number' ? aData.pointsAwarded : null,
-        };
-      });
+        // Ultra-fast path: embedded assessments directly on the unit document
+        if (Array.isArray(unitData.assessments) && unitData.assessments.length > 0) {
+          const assessments: Assessment[] = unitData.assessments.map((aData: any) => ({
+            id: aData.id || `a-${Math.random().toString(36).substring(2, 6)}`,
+            unitId: unitDoc.id,
+            title: aData.title || 'Assessment',
+            weight: typeof aData.weight === 'number' ? aData.weight : 0,
+            mark: typeof aData.mark === 'number' ? aData.mark : null,
+            isHurdle: Boolean(aData.isHurdle),
+            hurdleMinMark: typeof aData.hurdleMinMark === 'number' ? aData.hurdleMinMark : 0,
+            hurdleDescription: aData.hurdleDescription || '',
+            dueDate: aData.dueDate || '',
+            completed: Boolean(aData.completed),
+            hypotheticalMark: typeof aData.hypotheticalMark === 'number' ? aData.hypotheticalMark : null,
+            kind: (aData.kind as AssessmentKind) || 'standard',
+            isCompetencyPassed: Boolean(aData.isCompetencyPassed),
+            hypotheticalCompetency:
+              typeof aData.hypotheticalCompetency === 'boolean' ? aData.hypotheticalCompetency : null,
+            pointsAwarded: typeof aData.pointsAwarded === 'number' ? aData.pointsAwarded : null,
+          }));
 
-      assessments.sort((a, b) => a.title.localeCompare(b.title));
+          assessments.sort((a, b) => a.title.localeCompare(b.title));
 
-      units.push({
-        id: unitDoc.id,
-        code: unitData.code || 'ENGG1000',
-        name: unitData.name || 'Engineering Unit',
-        creditPoints: unitData.creditPoints || 6,
-        level: unitData.level || 1000,
-        semester: unitData.semester || 'Semester 1, 2026',
-        year: unitData.year || 2026,
-        gradingScheme: (unitData.gradingScheme as UnitGradingScheme) || 'standard',
-        assessments,
-      });
-    }
+          return {
+            id: unitDoc.id,
+            code: unitData.code || 'ENGG1000',
+            name: unitData.name || 'Engineering Unit',
+            creditPoints: unitData.creditPoints || 6,
+            level: unitData.level || 1000,
+            semester: unitData.semester || 'Semester 1, 2026',
+            year: unitData.year || 2026,
+            gradingScheme: (unitData.gradingScheme as UnitGradingScheme) || 'standard',
+            status: unitData.status || 'active',
+            finalMark: typeof unitData.finalMark === 'number' ? unitData.finalMark : null,
+            syllabusUploaded: Boolean(unitData.syllabusUploaded),
+            assessments,
+          };
+        }
+
+        // Parallel fallback: fetch subcollection if not embedded
+        try {
+          const assessSnap = await getDocs(
+            collection(db, 'users', userId, 'units', unitDoc.id, 'assessments')
+          );
+
+          const assessments: Assessment[] = assessSnap.docs.map((aDoc) => {
+            const aData = aDoc.data();
+            return {
+              id: aDoc.id,
+              unitId: unitDoc.id,
+              title: aData.title || 'Assessment',
+              weight: typeof aData.weight === 'number' ? aData.weight : 0,
+              mark: typeof aData.mark === 'number' ? aData.mark : null,
+              isHurdle: Boolean(aData.isHurdle),
+              hurdleMinMark: typeof aData.hurdleMinMark === 'number' ? aData.hurdleMinMark : 0,
+              hurdleDescription: aData.hurdleDescription || '',
+              dueDate: aData.dueDate || '',
+              completed: Boolean(aData.completed),
+              hypotheticalMark: typeof aData.hypotheticalMark === 'number' ? aData.hypotheticalMark : null,
+              kind: (aData.kind as AssessmentKind) || 'standard',
+              isCompetencyPassed: Boolean(aData.isCompetencyPassed),
+              hypotheticalCompetency:
+                typeof aData.hypotheticalCompetency === 'boolean' ? aData.hypotheticalCompetency : null,
+              pointsAwarded: typeof aData.pointsAwarded === 'number' ? aData.pointsAwarded : null,
+            };
+          });
+
+          assessments.sort((a, b) => a.title.localeCompare(b.title));
+
+          return {
+            id: unitDoc.id,
+            code: unitData.code || 'ENGG1000',
+            name: unitData.name || 'Engineering Unit',
+            creditPoints: unitData.creditPoints || 6,
+            level: unitData.level || 1000,
+            semester: unitData.semester || 'Semester 1, 2026',
+            year: unitData.year || 2026,
+            gradingScheme: (unitData.gradingScheme as UnitGradingScheme) || 'standard',
+            status: unitData.status || 'active',
+            finalMark: typeof unitData.finalMark === 'number' ? unitData.finalMark : null,
+            syllabusUploaded: Boolean(unitData.syllabusUploaded),
+            assessments,
+          };
+        } catch {
+          return {
+            id: unitDoc.id,
+            code: unitData.code || 'ENGG1000',
+            name: unitData.name || 'Engineering Unit',
+            creditPoints: unitData.creditPoints || 6,
+            level: unitData.level || 1000,
+            semester: unitData.semester || 'Semester 1, 2026',
+            year: unitData.year || 2026,
+            gradingScheme: (unitData.gradingScheme as UnitGradingScheme) || 'standard',
+            status: unitData.status || 'active',
+            finalMark: typeof unitData.finalMark === 'number' ? unitData.finalMark : null,
+            syllabusUploaded: Boolean(unitData.syllabusUploaded),
+            assessments: [],
+          };
+        }
+      })
+    );
 
     units.sort((a, b) => a.code.localeCompare(b.code));
     return units;
@@ -128,6 +194,10 @@ export async function saveUnitToFirestore(userId: string, unit: Unit): Promise<v
         semester: unit.semester,
         year: unit.year,
         gradingScheme: unit.gradingScheme || 'standard',
+        status: unit.status || 'active',
+        finalMark: typeof unit.finalMark === 'number' ? unit.finalMark : null,
+        syllabusUploaded: Boolean(unit.syllabusUploaded),
+        assessments: unit.assessments || [],
         updatedAt: new Date().toISOString(),
       }),
       { merge: true }
