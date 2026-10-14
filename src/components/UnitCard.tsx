@@ -155,12 +155,27 @@ export const UnitCard: React.FC<UnitCardProps> = ({ unit }) => {
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             <div className="text-right font-mono">
               <div className="flex items-baseline justify-end gap-1.5">
-                <span className="text-xl sm:text-2xl font-bold text-zinc-950 dark:text-zinc-50 tabular-nums">
-                  {result.earnedMark}
-                </span>
-                {isWhatIfMode && result.projectedFinalMark !== result.earnedMark && (
-                  <span className="text-base sm:text-lg font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums">
-                    → {result.projectedFinalMark}
+                {isWhatIfMode ? (
+                  <>
+                    <span
+                      className="text-xs sm:text-sm font-semibold text-zinc-400 dark:text-zinc-500 tabular-nums"
+                      title="Locked-in earned mark so far"
+                    >
+                      {result.earnedMark}
+                    </span>
+                    <span className="text-xs text-zinc-400 dark:text-zinc-500">→</span>
+                    <span
+                      className="text-xl sm:text-2xl font-bold text-emerald-600 dark:text-emerald-400 tabular-nums"
+                      title="What-If simulated final mark"
+                    >
+                      {result.projectedFinalMark}
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-xl sm:text-2xl font-bold text-zinc-950 dark:text-zinc-50 tabular-nums">
+                    {result.completedWeight >= 100
+                      ? result.earnedMark
+                      : result.projectedFinalMark || result.earnedMark}
                   </span>
                 )}
                 <span className="text-xs text-zinc-400">/ 100</span>

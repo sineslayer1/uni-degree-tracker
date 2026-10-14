@@ -83,6 +83,25 @@ export function calculateUnitResult(unit: Unit, isWhatIfMode: boolean): Calculat
   let anyHurdleFailed = false;
   let hurdleFailureReason = '';
 
+  // Edge case: unit has no assessments yet (e.g. newly added unit or placeholder with finalMark)
+  if (!unit.assessments || unit.assessments.length === 0) {
+    const fallbackMark =
+      typeof unit.finalMark === 'number' && !isNaN(unit.finalMark) ? Math.max(0, Math.min(100, unit.finalMark)) : 0;
+    return {
+      unit,
+      earnedMark: fallbackMark,
+      completedWeight: typeof unit.finalMark === 'number' ? 100 : 0,
+      currentPercentage: fallbackMark,
+      projectedFinalMark: fallbackMark,
+      isPassing: fallbackMark >= 50,
+      hurdles: [],
+      allHurdlesCleared: true,
+      hurdleFailRisk: false,
+      statusDisplay: getGradeLabel(fallbackMark),
+      gradingScheme: unit.gradingScheme || 'standard',
+    };
+  }
+
   // 1. Process Pass/Fail Competency & Standard Hurdles
   for (const a of unit.assessments) {
     if (a.kind === 'competency_hurdle' || a.isHurdle) {
@@ -95,7 +114,10 @@ export function calculateUnitResult(unit: Unit, isWhatIfMode: boolean): Calculat
       if (isCompetency) {
         const passedActual = Boolean(a.isCompetencyPassed);
         const passedHypo = Boolean(a.hypotheticalCompetency);
-        isPassed = passedActual || (isWhatIfMode && passedHypo);
+        isPassed =
+          isWhatIfMode && a.hypotheticalCompetency !== null && a.hypotheticalCompetency !== undefined
+            ? passedHypo
+            : passedActual;
         isPending = !isPassed;
         if (!isPassed && !isWhatIfMode) {
           anyHurdleFailed = true;
@@ -105,11 +127,12 @@ export function calculateUnitResult(unit: Unit, isWhatIfMode: boolean): Calculat
       } else {
         const hasActualMark = typeof a.mark === 'number' && !isNaN(a.mark);
         const hasHypothetical = typeof a.hypotheticalMark === 'number' && !isNaN(a.hypotheticalMark);
-        markToCheck = hasActualMark
-          ? a.mark!
-          : isWhatIfMode && hasHypothetical
-          ? a.hypotheticalMark!
-          : null;
+        markToCheck =
+          isWhatIfMode && hasHypothetical
+            ? a.hypotheticalMark!
+            : hasActualMark
+            ? a.mark!
+            : null;
 
         isPassed = markToCheck !== null && markToCheck >= a.hurdleMinMark;
         isPending = markToCheck === null;
@@ -145,7 +168,10 @@ export function calculateUnitResult(unit: Unit, isWhatIfMode: boolean): Calculat
     for (const f of foundationTasks) {
       const actualCleared = Boolean(f.isCompetencyPassed);
       const hypoCleared = Boolean(f.hypotheticalCompetency);
-      const isCleared = actualCleared || (isWhatIfMode && hypoCleared);
+      const isCleared =
+        isWhatIfMode && f.hypotheticalCompetency !== null && f.hypotheticalCompetency !== undefined
+          ? hypoCleared
+          : actualCleared;
       if (!isCleared) {
         allFoundationCleared = false;
         break;
@@ -163,10 +189,13 @@ export function calculateUnitResult(unit: Unit, isWhatIfMode: boolean): Calculat
       if (hasActualMark) {
         const gained = (adv.mark! * adv.weight) / 100;
         actualAdvancedSum += gained;
-        projectedAdvancedSum += gained;
         completedAdvancedWeight += adv.weight;
-      } else if (isWhatIfMode && hasHypo) {
+      }
+
+      if (isWhatIfMode && hasHypo) {
         projectedAdvancedSum += (adv.hypotheticalMark! * adv.weight) / 100;
+      } else if (hasActualMark) {
+        projectedAdvancedSum += (adv.mark! * adv.weight) / 100;
       }
     }
 
@@ -217,17 +246,17 @@ export function calculateUnitResult(unit: Unit, isWhatIfMode: boolean): Calculat
       const contribution = (a.mark! * a.weight) / 100;
       earnedMarkComponent += contribution;
       completedWeight += a.weight;
-      projectedComponent += contribution;
-    } else if (isWhatIfMode && hasHypothetical) {
+    }
+
+    if (isWhatIfMode && hasHypothetical) {
       projectedComponent += (a.hypotheticalMark! * a.weight) / 100;
+    } else if (hasActualMark) {
+      projectedComponent += (a.mark! * a.weight) / 100;
     }
   }
 
   const currentPercentage = completedWeight > 0 ? (earnedMarkComponent / completedWeight) * 100 : 0;
-  const projectedFinalMark = Math.min(
-    100,
-    Math.round((earnedMarkComponent + (projectedComponent - earnedMarkComponent)) * 10) / 10
-  );
+  const projectedFinalMark = Math.min(100, Math.round(projectedComponent * 10) / 10);
 
   const hurdleFailRisk = anyHurdleFailed && projectedFinalMark >= 50;
   const isPassing = projectedFinalMark >= 50 && !anyHurdleFailed;
@@ -276,17 +305,23 @@ export function calculateAcademicMetrics(
     const cp = Number(u.creditPoints) > 0 ? Number(u.creditPoints) : 6;
     const isFinished = u.status === 'finished';
 
-    // Finished units have a definitive final mark
+    // Finished units have a definitive final mark.
+    // Active units rely on assessment-derived results, unless they have zero assessments and a manual finalMark.
+    const hasManualFinalMark = typeof u.finalMark === 'number' && !isNaN(u.finalMark);
     const finalEarnedMark =
-      typeof u.finalMark === 'number' && !isNaN(u.finalMark)
-        ? Math.max(0, Math.min(100, u.finalMark))
+      isFinished && hasManualFinalMark
+        ? Math.max(0, Math.min(100, u.finalMark!))
+        : (!u.assessments || u.assessments.length === 0) && hasManualFinalMark
+        ? Math.max(0, Math.min(100, u.finalMark!))
         : result.completedWeight > 0
         ? result.currentPercentage
         : 0;
 
     const projectedMark =
-      typeof u.finalMark === 'number' && !isNaN(u.finalMark)
-        ? Math.max(0, Math.min(100, u.finalMark))
+      isFinished && hasManualFinalMark
+        ? Math.max(0, Math.min(100, u.finalMark!))
+        : (!u.assessments || u.assessments.length === 0) && hasManualFinalMark
+        ? Math.max(0, Math.min(100, u.finalMark!))
         : result.projectedFinalMark;
 
     // Cumulative WAM encompasses both finished and active units
